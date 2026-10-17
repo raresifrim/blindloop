@@ -1,4 +1,7 @@
-# CMakeLists.txt — the IPCEI benchmark suite (built by build.sh).
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
+# CMakeLists.txt — blindloop, the IPCEI protocol benchmark suite (built by build.sh).
 #
 # Targets:
 #   ipcei_zk          PID (ADSC-SNARK) and flag (Groth16) proofs + BN254 Schnorr,
@@ -10,7 +13,7 @@
 # Library locations come from build.sh (-DOPENFHE_ROOT, -DSEAL_ROOT, ...); every
 # bench build of one backend (stock, Intel HEXL, rvv-hexl) is its own build dir.
 cmake_minimum_required(VERSION 3.16)
-project(ipcei_benches C CXX)
+project(blindloop C CXX)
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)

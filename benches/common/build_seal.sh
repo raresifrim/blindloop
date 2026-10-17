@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 # build_seal.sh <stock|intel-hexl> — Microsoft SEAL v4.1.2, static, installed into
 # deps/<backend>[-<ARM_CPU>]/seal. Called by build.sh; the rvv-hexl SEAL comes from
 # the rvv-hexl checkout instead (make seal WITH_RVV_HEXL=ON).

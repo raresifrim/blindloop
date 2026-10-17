@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // zk.hpp — zero-knowledge proofs of the protocol, on the vendored ADSC-SNARK libsnark
 // (third_party/adsc-snark, curve BN254):
 //

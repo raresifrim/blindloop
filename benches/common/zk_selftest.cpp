@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // zk_selftest.cpp — checks that the ADSC proof (PID alone, and PID + flag comparisons) and
 // both signature schemes verify (and that tampering is rejected), and times each operation.
 //   zk_selftest [--rounds R]

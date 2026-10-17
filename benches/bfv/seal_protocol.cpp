@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // seal_protocol.cpp — one IPCEI secure-actuation round, BFV in Microsoft SEAL 4.1.
 //
 // end node   S = 5 sensor readings are booleanized at the source, flag_i = reading_i <

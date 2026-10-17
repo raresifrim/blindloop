@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# build.sh — builds the FHE libraries and the IPCEI benches, once per backend.
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
+# build.sh — builds the FHE libraries and the blindloop benches, once per backend.
 #
 #   ./build.sh [--backends "stock intel-hexl rvv-hexl"] [--deps-only | --benches-only]
 #              [--no-n32] [--packages] [--jobs N]

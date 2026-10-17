@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // sig.hpp — uplink / downlink signatures for the protocol benches (Ed25519, OpenSSL).
 // Each node holds its own key pair and the peer's public key; sign and verify run over
 // the exact message bytes that cross the link.

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 """report.py — turns one run.sh results directory into REPORT.md and summary.json.
 
     tools/report.py results/<label> [results/<label2> ...]
@@ -123,7 +126,7 @@ def summary_rows(backends, data):
 def report(d):
     backends, data = load(d)
     run = info(d / "RUN_INFO")
-    md = [f"# IPCEI protocol benchmark: {run.get('label', d.name)}", ""]
+    md = [f"# blindloop: {run.get('label', d.name)}", ""]
     for k in ("host", "cpu", "launch", "threads", "rounds", "started", "finished"):
         if k in run:
             md.append(f"- **{k}**: {run[k]}")
@@ -160,7 +163,7 @@ def report(d):
 
 def compare(dirs, results):
     out = dirs[0].parent / "COMPARE.md"
-    md = ["# IPCEI protocol benchmark: comparison (median ms, end to end)", ""]
+    md = ["# blindloop: comparison (median ms, end to end)", ""]
     labels = [l for l, _ in results]
     keys = []
     for _, rows in results:

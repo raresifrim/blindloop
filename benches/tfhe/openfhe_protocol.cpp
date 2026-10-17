@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // openfhe_protocol.cpp — the IPCEI secure-actuation round trip in TFHE (OpenFHE binfhe,
 // GINX bootstrapping), with the per-step breakdown of benches/common/ipcei/harness.hpp.
 //

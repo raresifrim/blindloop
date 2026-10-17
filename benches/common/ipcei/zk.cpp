@@ -1,3 +1,8 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+// Contains code from the ADSC-SNARK controller scenario, Copyright (c) 2024 Johannes Reinhart,
+// MIT License (third_party/adsc-snark/LICENSE), marked "verbatim" below.
+//
 // zk.cpp — the ADSC-SNARK of the end node (PID control law + flag comparisons) and BN254
 // Schnorr on the vendored libsnark (third_party/adsc-snark). Compiled at C++14. Interface: zk.hpp.
 //

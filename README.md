@@ -1,4 +1,6 @@
-# IPCEI protocol benchmarks: FHE + ZKP on embedded nodes
+# blindloop
+
+**A closed control loop, computed blind and proven:** end-to-end FHE + ZKP benchmarks of a secure-actuation protocol on embedded nodes.
 
 End-to-end benchmarks of the IPCEI sensor protocol. An **end node** encrypts its sensor
 flags, proves its PID control step and its flags in zero knowledge, and signs the uplink.
@@ -84,3 +86,10 @@ On the SpaceMiT K3, the binaries are the same for both clusters, so only the run
 - **BFV:** the central node lifts the LWE samples into an RLWE ciphertext and computes the product tree. The MAC tag `Y(alpha)` lets the end node check the result.
 - **TFHE:** the central node bootstraps gate by gate on the LWE ciphertexts. There is no MAC tag in this design.
 - **The flags stay private, but they aren't bound to the ciphertexts:** the ADSC proof shows the flags are honest comparisons of authenticated readings without revealing them. Nothing in the proof yet ties those flags to the FHE ciphertexts of the uplink. For TFHE that needs an encryption-correctness check inside the circuit; for BFV it needs a lattice proof of encryption.
+
+## Copyright
+
+Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+All rights reserved. See [COPYRIGHT](COPYRIGHT).
+
+The vendored code under `third_party/` keeps its own licenses; see [`third_party/adsc-snark/VENDORED.md`](third_party/adsc-snark/VENDORED.md).

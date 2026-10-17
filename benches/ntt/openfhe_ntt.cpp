@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // openfhe_ntt_bench — single-thread forward-NTT latency using OpenFHE's
 // ChineseRemainderTransformFTT (the negacyclic NTT its BFV/CKKS/binfhe use).
 //

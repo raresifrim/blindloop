@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // direction_a_tfhe_lut_bench.cpp
 // ---------------------------------------------------------------------------
 // §5a MIDDLE PATH — compare a w-bit sensor reading against a public threshold

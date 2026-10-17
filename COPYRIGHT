@@ -1,0 +1,10 @@
+blindloop
+
+Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+All rights reserved.
+
+This notice covers the files of this repository except those under third_party/,
+which are distributed under their own licenses (third_party/adsc-snark/LICENSE and
+third_party/adsc-snark/VENDORED.md). benches/common/ipcei/zk.cpp contains code from
+the ADSC-SNARK controller scenario, Copyright (c) 2024 Johannes Reinhart, used under
+the MIT License.

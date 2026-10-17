@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // sig.cpp — Ed25519 through OpenSSL EVP (one-shot EVP_DigestSign / EVP_DigestVerify).
 #include "ipcei/sig.hpp"
 

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 # Platform.cmake — cross-platform locations & flags for the FHE benches.
 # include() this right after project() in each bench CMakeLists.
 # Works on Apple-Silicon macOS (Homebrew), x86-64 Linux, and riscv64 Linux.

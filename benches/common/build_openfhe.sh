@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 # build_openfhe.sh <64|32> — stock OpenFHE v1.5.1 at NATIVE_SIZE=64 or 32, installed
 # into deps/stock[-<ARM_CPU>]/openfhe-n<size>. Called by build.sh.
 #

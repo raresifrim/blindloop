@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // seal_ntt_bench — single-thread forward-NTT latency using SEAL's
 // ntt_negacyclic_harvey (the exact primitive HEXL/HEAX accelerate).
 //

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+// All rights reserved.
+//
 // harness.hpp — shared protocol harness for the IPCEI secure-actuation benches.
 //
 // Every protocol bench (BFV in SEAL and OpenFHE, TFHE in OpenFHE) models the same

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# run.sh — runs the IPCEI benches of every built backend and writes the report.
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
+# run.sh — runs the blindloop benches of every built backend and writes the report.
 #
 #   ./run.sh [--backends "stock rvv-hexl"] [--rounds R] [--stress-rounds R] [--only "bfv_seal ..."]
 #            [--label NAME] [--launch "PREFIX"] [--no-ntt]

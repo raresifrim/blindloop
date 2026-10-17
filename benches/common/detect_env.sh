@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 # Shared platform detection for build.sh and the dependency scripts.
 # Source it (don't execute):  . "$(dirname "$0")/detect_env.sh"
 #

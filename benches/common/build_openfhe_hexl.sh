@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
+# All rights reserved.
+#
 # build_openfhe_hexl.sh — OpenFHE v1.5.1 with the openfhe-hexl v1.5.1.0 overlay and
 # Intel HEXL 1.2.6 (which its CMake downloads and builds), NATIVE_SIZE=64, installed
 # into deps/intel-hexl/openfhe-n64. Called by build.sh on x86-64 with AVX-512.
