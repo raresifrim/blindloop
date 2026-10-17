@@ -67,6 +67,7 @@ run_logged "$LOGS/openfhe-intel-hexl-configure.log" "OpenFHE intel-hexl configur
   -DCMAKE_CXX_FLAGS="$NATIVE_FLAG" \
   -DCMAKE_C_FLAGS="$NATIVE_FLAG" \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+  -DCMAKE_INSTALL_RPATH="$PREFIX/lib" \
   -DWITH_OPENMP=ON \
   -DWITH_INTEL_HEXL=ON \
   -DNATIVE_SIZE=64 \

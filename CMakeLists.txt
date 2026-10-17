@@ -108,6 +108,11 @@ function(ipcei_openfhe tgt root)
     target_link_libraries(${tgt} PRIVATE ${hexl})
   endif()
   set_target_properties(${tgt} PROPERTIES BUILD_RPATH "${root}/lib;${root}/lib64")
+  if(NOT APPLE)
+    # DT_RPATH, not RUNPATH: libOPENFHEpke.so needs libOPENFHEbinfhe.so itself, and the
+    # loader searches an executable's RUNPATH only for its own direct dependencies
+    target_link_options(${tgt} PRIVATE "LINKER:--disable-new-dtags")
+  endif()
   # the installed package records the version (OpenFHE's version.h needs a define
   # that only exists while OpenFHE itself is built)
   file(GLOB vfile "${root}/lib/OpenFHE/OpenFHEConfigVersion.cmake" "${root}/lib64/OpenFHE/OpenFHEConfigVersion.cmake")
