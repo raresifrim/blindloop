@@ -35,6 +35,11 @@ set(MULTICORE OFF CACHE BOOL "" FORCE)
 set(WITH_PROCPS OFF CACHE BOOL "" FORCE)
 set(WITH_SUPERCOP OFF CACHE BOOL "" FORCE)
 set(ETHSNARKS_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+# gmp and OpenSSL headers for the fork's libraries: Homebrew's on macOS (on Linux they are
+# in the default search path, and -I/usr/include would break GCC's #include_next)
+if(APPLE)
+  include_directories(${OPENSSL_INCLUDE_DIR} ${DEP_INCLUDE})
+endif()
 add_subdirectory(${ADSC_DIR} ${CMAKE_BINARY_DIR}/adsc-snark EXCLUDE_FROM_ALL)
 
 # The fork configures its sources through directory properties (add_definitions,

@@ -32,5 +32,6 @@ Build options used by the suite: -DCURVE=BN254 -DUSE_ASM=OFF -DWITH_PROCPS=OFF
 -DWITH_SUPERCOP=OFF -DOPT_FLAGS=-O2 (the same flags on every platform, so the ZK timings
 stay comparable). Local changes to the vendored sources:
 - CMakeLists.txt and depends/libsnark/CMakeLists.txt: FIND_PACKAGE(Boost ... program_options)
-  is QUIET instead of REQUIRED. Only the demo and profiling executables use Boost, and none of
+  is QUIET instead of REQUIRED (and its include directory is added only when found). Only the
+  demo and profiling executables use Boost, and none of
   them is built by default, so machines without libboost-program-options-dev can build.
