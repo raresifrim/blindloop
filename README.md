@@ -2,34 +2,55 @@
 
 **A closed control loop, computed blind and proven:** end-to-end FHE + ZKP benchmarks of a secure-actuation protocol on embedded nodes.
 
-End-to-end benchmarks of the IPCEI sensor protocol. An **end node** encrypts its sensor
-flags, proves its PID control step and its flags in zero knowledge, and signs the uplink.
-A **central node** verifies everything, evaluates on the ciphertexts, and returns a signed
-encrypted decision, which the end node verifies and decrypts.
+The use case is NXP's window-lift control (IPCEI A14), see [`scenario.hpp`](benches/common/ipcei/scenario.hpp). Three **end zones** each encrypt their own signals:
 
-Each bench reports every protocol step per round (median / mean / min / max over the
-measured rounds), plus the end-node, central-node and end-to-end totals. One-time setup
-(key generation, SNARK key generation) is not reported.
+| end zone | signals | what it encrypts (flags) |
+|---|---|---|
+| **passenger** (the actuator) | window button UP/OFF/DOWN, 12-bit window position, 4 motor-error flags | button up/down, Full Up, Full Down, motor error |
+| **driver side** | overwrite button for the passenger window UP/OFF/DOWN, child-lock | overwrite up/down, child-lock |
+| **ignition control ECU** | Klem 15 | Klem |
 
-| bench | scheme | library | evaluation |
+The **central compute** (the Process APP) evaluates the motor command blind and sends it back to the passenger zone, which executes it. The command is Motor+, Motor- or Off:
+
+```
+dir    = overwrite != OFF ? overwrite : (child_lock ? OFF : passenger_button)
+Motor+ : dir = UP   and not Full Up   and Klem and no motor error
+Motor- : dir = DOWN and not Full Down and Klem and no motor error
+else Off
+```
+
+**Threat model:**
+- The end zones see their own raw values and share key material, provisioned into their HSEs.
+- The central compute must stay blind, and every value on the bus is protected.
+- No zone knows another zone's message layout; the central compute aligns the messages.
+
+Every round covers one case of the decision. The first 12 rounds cover each case once, so a default run (12 rounds plus 1 warm-up) exercises all of them.
+
+Each bench reports every protocol step per round (median / mean / min / max over the measured rounds), per zone, plus:
+- each zone's total;
+- the **critical path**: the end zones work in parallel, so the slowest uplink, then the central compute, then the passenger's downlink;
+- the sequential sum of all steps.
+
+One-time setup (key generation, provisioning, SNARK key generation) is not reported.
+
+| bench | scheme | library | what the central compute does |
 |---|---|---|---|
-| `bfv_seal` | BFV | Microsoft SEAL 4.1.2 | seeded-LWE uplink, promote + trace, degree-5 product tree with an algebraic MAC tag |
-| `bfv_openfhe` | BFV | OpenFHE 1.5.1 | the same protocol, with OpenFHE's own best parameters |
-| `tfhe_openfhe` | TFHE (GINX) | OpenFHE 1.5.1 binfhe | `--mode flags`: the end node sends one-bit flags, the central node ANDs them; `--mode stress`: the end node sends the raw readings bit by bit, the central node runs a bit-serial comparator per sensor, then the AND |
+| `bfv_seal` | BFV | Microsoft SEAL 4.1.2 | lifts each zone's seeded LWE values to RLWE (EvalTrace), evaluates the decision on MAC-tagged polynomials |
+| `bfv_openfhe` | BFV | OpenFHE 1.5.1 | aligns the zones' packed ciphertexts with rotations, evaluates the decision with a packed MAC (evaluation form, 3 instances) |
+| `tfhe_openfhe` | TFHE (GINX) | OpenFHE 1.5.1 binfhe | `--mode flags`: the zones send their derived bits and the decision takes 11 bootstrapped gates; `--mode stress`: the zones send their raw signals bit by bit and the central compute also derives Full Up / Full Down (two 12-bit comparators) and the motor-error OR |
 | `tfhe_openfhe_n32` | TFHE (GINX) | OpenFHE 1.5.1, `NATIVE_SIZE=32` | as above, 32-bit words |
 
 Every protocol bench also runs these, for real, in every round:
 
-- **ADSC proof**: one ADSC-SNARK (Reinhart et al.) per round over the end node's authenticated sensor data, with a state commitment chained across rounds. It covers two things:
-  - the PID controller step;
-  - the flags, wherever the end node sends flags (BFV, and TFHE `--mode flags`): each threshold sensor authenticates its reading, and the circuit computes `flag_i = reading_i < threshold_i` against the central node's public thresholds.
-
-  The readings and the flags stay private.
-- **Signatures**: Ed25519 (OpenSSL) on both links. This was measured about 7× faster than a BN254 Schnorr signature.
+- **ADSC proofs:** one ADSC-SNARK (Reinhart et al.) per end zone and round.
+  - **What it proves:** the zone's sensors authenticate their raw values, and the circuit derives exactly the bits the zone encrypts (Full Up / Full Down from the private position, the OR of the error flags), checking that 0/1 values are boolean and that a 3-position switch never reports both directions.
+  - **What stays private:** the raw values and the bits.
+  - **Freshness:** the chained state is a round counter, so a proof is valid only in its own round.
+- **Signatures:** Ed25519 (OpenSSL) on every link. This was measured about 7× faster than a BN254 Schnorr signature.
 
 The ZK code is the vendored [`third_party/adsc-snark`](third_party/adsc-snark/VENDORED.md). It always uses BN254, portable field arithmetic and a single thread, so ZK timings stay comparable across machines.
 
-Microbenches: `ntt_seal` and `ntt_openfhe` (forward/inverse NTT per size and prime width), `tfhe_lut_openfhe` (LUT vs gate evaluation), and `zk_selftest` (checks that every proof and signature verifies and that tampering is rejected, and times each operation).
+Microbenches: `ntt_seal` and `ntt_openfhe` (forward/inverse NTT per size and prime width), `tfhe_lut_openfhe` (LUT vs gate evaluation), and `zk_selftest` (checks every zone's proof in both encodings and both signature schemes, checks that replays and tampering are rejected, and times each operation).
 
 ## Backends
 
@@ -60,7 +81,7 @@ benches always measure rvv-hexl at its current commit, which `BUILD_INFO` record
 - **Rebuilds:** libraries are rebuilt only when their configuration changes. `FORCE=1 ./build.sh` rebuilds them anyway.
 - **Comparing runs:** `tools/report.py results/a results/b` compares runs side by side in `results/COMPARE.md`.
 - **Compiler and flags:** clang++ on macOS, g++ on Linux. On riscv64 it uses the newest g++ that accepts `-march=rva23u64`. The ISA flag is `-mcpu=native`, `-march=native` or `-march=rva23u64`; see [`benches/common/detect_env.sh`](benches/common/detect_env.sh).
-- **Shorter runs:** `./run.sh --rounds 3 --stress-rounds 1 --only "bfv_seal tfhe_flags"`.
+- **Shorter runs:** `./run.sh --rounds 3 --stress-rounds 1 --only "bfv_seal tfhe_flags"` (fewer than 12 rounds skips some cases).
 
 Run on an otherwise idle machine: the benches measure wall-clock time.
 
@@ -82,10 +103,9 @@ On the SpaceMiT K3, the binaries are the same for both clusters, so only the run
 
 ## Protocol notes
 
-- **Uplink:** the end node sends its encrypted flags as seeded LWE: a 32-byte seed plus the bit-packed `b` values. The central node expands `a` from the seed.
-- **BFV:** the central node lifts the LWE samples into an RLWE ciphertext and computes the product tree. The MAC tag `Y(alpha)` lets the end node check the result.
-- **TFHE:** the central node bootstraps gate by gate on the LWE ciphertexts. There is no MAC tag in this design.
-- **The flags stay private, but they aren't bound to the ciphertexts:** the ADSC proof shows the flags are honest comparisons of authenticated readings without revealing them. Nothing in the proof yet ties those flags to the FHE ciphertexts of the uplink. For TFHE that needs an encryption-correctness check inside the circuit; for BFV it needs a lattice proof of encryption.
+- **Uplink:** every zone sends seeded ciphertexts: one 32-byte seed per zone and round plus the bit-packed `b` values (the `a` parts are regenerated by the central compute from the seed).
+- **BFV:** a homomorphic MAC (Catalano–Fiore) computed alongside the decision lets the passenger zone check that the central compute evaluated exactly the agreed function. TFHE has no MAC in this design.
+- **The proven bits aren't bound to the ciphertexts yet:** the ADSC proofs show each zone's bits come from its authenticated sensor data without revealing them. Nothing in the proofs ties those bits to the zone's FHE ciphertexts. For TFHE that needs an encryption-correctness check inside the circuit; for BFV a lattice proof of encryption.
 
 ## Copyright
 

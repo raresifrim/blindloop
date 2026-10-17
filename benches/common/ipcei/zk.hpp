@@ -1,28 +1,31 @@
 // Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
 // All rights reserved.
 //
-// zk.hpp — zero-knowledge proofs of the protocol, on the vendored ADSC-SNARK libsnark
-// (third_party/adsc-snark, curve BN254):
+// zk.hpp — zero-knowledge proofs of the end zones' inputs, on the vendored ADSC-SNARK
+// libsnark (third_party/adsc-snark, curve BN254):
 //
-//   ADSC proof  one ADSC-SNARK (r1cs_gg_ppzkadscsnark, Reinhart et al.) per round over the
-//               end node's authenticated sensor data:
-//                 * the 3-DOF PID controller of the fork's controller_scenario: four sensors
-//                   (two command, two measurement) authenticate their samples, the circuit
-//                   runs the control law, the outputs are public;
-//                 * S threshold sensors authenticate one w-bit reading each, and the circuit
-//                   computes flag_i = (reading_i < threshold_i) against the public thresholds.
-//                   Readings and flags stay private: the proof shows the flags are honest
-//                   comparisons of authenticated readings without revealing them.
-//               The central node verifies against the previous round's state commitment.
+//   ADSC proof  one ADSC-SNARK (r1cs_gg_ppzkadscsnark, Reinhart et al.) per end zone and
+//               round. The zone's sensors authenticate their raw values (scenario.hpp,
+//               SensorValues); the circuit derives exactly the bits the zone encrypts:
+//                 flags  passenger: button up / down, top = position >= kTop,
+//                                   bot = position <= kBottom, err = OR(error flags)
+//                        driver:    overwrite up / down, child-lock
+//                        ign:       Klem 15
+//                 raw    the raw values themselves (the position as kPositionBits bits)
+//               checking every 0/1 value is boolean, the 3-position switches never report
+//               both directions and the position fits its ADC width. Raw values and bits
+//               stay private; the public input is the round number (and, for the
+//               passenger's flags, the limits). The chained state is a round counter, so
+//               a proof is only valid in its own round.
 //   Schnorr     a BN254 G1 Schnorr signature (SHA-256 challenge), the alternative to
 //               Ed25519 for the uplink / downlink signatures.
 //
-// What the proof does not do: tie the private flags to the FHE ciphertexts of the uplink.
-// The end node computes and encrypts the same flags (AdscProver::flags()), but nothing in
-// the proof forces it to; that needs an encryption-correctness check in the circuit.
+// What the proof does not do: tie the bits to the zone's FHE ciphertexts. The zone
+// encrypts the bits the circuit derived (AdscProver::bits()), but nothing in the proof
+// forces it to; that needs an encryption-correctness check in the circuit.
 //
 // The roles are split like the protocol's nodes: a *Setup object holds the keys
-// (one-time, not reported), a *Prover lives in the end node, a *Verifier in the
+// (one-time, not reported), a *Prover lives in the end zone, a *Verifier in the
 // central node, and an opaque message carries the proof from one to the other.
 //
 // No libsnark type appears here, so the C++17 benches can include this header while
@@ -34,6 +37,8 @@
 #include <memory>
 #include <vector>
 
+#include "ipcei/harness.hpp"  // Zone
+
 namespace ipcei {
 namespace zk {
 
@@ -43,16 +48,16 @@ void Init();
 
 // ---------------------------------------------------------------- ADSC-SNARK
 
-/// One round's proof as it crosses the uplink: the public control outputs, the proof and
-/// the state commitment. The thresholds are public inputs too, but the verifier supplies
-/// its own; the flags are not in the message.
+/// What the end zones encrypt (scenario.hpp): bits derived at the source, or raw values.
+enum class Encoding { Flags, Raw };
+
+/// One zone's proof as it crosses the uplink: the proof and the state commitment.
 class AdscMessage {
 public:
 	AdscMessage();
 	~AdscMessage();
 	AdscMessage(AdscMessage&&) noexcept;
 	AdscMessage& operator=(AdscMessage&&) noexcept;
-	long output[3];          // control outputs x, y, z (public)
 	size_t proof_bytes = 0;  // proof + commitment, as serialized by libsnark
 	struct Impl;
 	std::unique_ptr<Impl> impl;
@@ -60,42 +65,40 @@ public:
 
 class AdscSetup {
 public:
-	/// Builds the circuit (PID + flag_sensors comparisons of width-bit readings; 0 = the
-	/// PID circuit alone) and runs the ADSC generator (one-time).
-	explicit AdscSetup(int flag_sensors = 0, int width = 32);
+	/// Builds the zone's circuit and runs the ADSC generator (one-time).
+	AdscSetup(Zone zone, Encoding encoding);
 	~AdscSetup();
-	int flag_sensors() const;
-	int width() const;
+	Zone zone() const;
+	Encoding encoding() const;
 	size_t constraints() const;
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 };
 
-/// End node: the sensors and the controller device.
+/// End zone: its sensors and the device that proves.
 class AdscProver {
 public:
 	explicit AdscProver(const AdscSetup& setup);
 	~AdscProver();
-	/// The PID sensors take their samples of round `round` and the threshold sensors their
-	/// `readings` (one each, < 2^width); every sensor authenticates its data.
-	void Authenticate(int round, const std::vector<uint32_t>& readings = {});
-	/// Runs the control law and the comparisons on the authenticated inputs and proves them.
-	AdscMessage Prove(const std::vector<uint32_t>& thresholds = {});
-	/// The flags the last Prove computed in the circuit (what the end node encrypts).
-	const std::vector<uint8_t>& flags() const;
+	/// The zone's sensors authenticate this round's values (scenario.hpp, SensorValues).
+	void Authenticate(const std::vector<uint32_t>& sensor_values);
+	/// Derives the zone's bits from the authenticated values and proves it.
+	AdscMessage Prove();
+	/// The bits the last Prove derived (FlagBits / RawBits order): what the zone encrypts.
+	const std::vector<uint8_t>& bits() const;
 
 private:
 	struct Impl;
 	std::unique_ptr<Impl> impl_;
 };
 
-/// Central node: verifies each round's proof for its thresholds, against the previous
+/// Central node: verifies one zone's proofs, round after round, against the previous
 /// commitment (a rejected proof does not advance the chain).
 class AdscVerifier {
 public:
 	explicit AdscVerifier(const AdscSetup& setup);
 	~AdscVerifier();
-	bool Verify(const AdscMessage& msg, const std::vector<uint32_t>& thresholds = {});
+	bool Verify(const AdscMessage& msg);
 
 private:
 	struct Impl;

@@ -4,11 +4,12 @@
 # CMakeLists.txt — blindloop, the IPCEI protocol benchmark suite (built by build.sh).
 #
 # Targets:
-#   ipcei_zk          PID (ADSC-SNARK) and flag (Groth16) proofs + BN254 Schnorr,
-#                     on the vendored third_party/adsc-snark (curve BN254)
+#   ipcei_zk          the end zones' ADSC-SNARKs + BN254 Schnorr, on the vendored
+#                     third_party/adsc-snark (curve BN254)
 #   ipcei_sig         Ed25519 uplink / downlink signatures (OpenSSL)
-#   zk_selftest       checks every proof and signature verifies; times the signatures
-#   (protocol and NTT benches: added below as they exist)
+#   zk_selftest       checks every zone's proof and both signatures; times them
+#   bfv_seal, bfv_openfhe, tfhe_openfhe[_n32]   the protocol benches (window-lift scenario)
+#   ntt_seal, ntt_openfhe, tfhe_lut_openfhe     microbenches
 #
 # Library locations come from build.sh (-DOPENFHE_ROOT, -DSEAL_ROOT, ...); every
 # bench build of one backend (stock, Intel HEXL, rvv-hexl) is its own build dir.
@@ -41,13 +42,13 @@ add_subdirectory(${ADSC_DIR} ${CMAKE_BINARY_DIR}/adsc-snark EXCLUDE_FROM_ALL)
 get_directory_property(ADSC_DEFS DIRECTORY ${ADSC_DIR} COMPILE_DEFINITIONS)
 get_directory_property(ADSC_INCS DIRECTORY ${ADSC_DIR} INCLUDE_DIRECTORIES)
 
-add_library(ipcei_zk STATIC benches/common/ipcei/zk.cpp ${ADSC_DIR}/application/gadgets/utils.cpp)
+add_library(ipcei_zk STATIC benches/common/ipcei/zk.cpp)
 set_target_properties(ipcei_zk PROPERTIES CXX_STANDARD 14 CXX_STANDARD_REQUIRED ON)
 target_compile_definitions(ipcei_zk PRIVATE ${ADSC_DEFS})
 target_compile_options(ipcei_zk PRIVATE -O2 -w)
 target_include_directories(ipcei_zk PRIVATE ${ADSC_INCS} ${ADSC_DIR})
 target_include_directories(ipcei_zk PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benches/common)
-target_link_libraries(ipcei_zk PUBLIC snark snark_crypto ff OpenSSL::Crypto)  # as the fork's controller_scenario
+target_link_libraries(ipcei_zk PUBLIC snark snark_crypto ff OpenSSL::Crypto)
 
 # ---------------------------------------------------------------- harness
 add_library(ipcei_sig STATIC benches/common/ipcei/sig.cpp)

@@ -1,9 +1,8 @@
 # Vendored: ADSC-SNARK (Reinhart et al.)
 
 A pinned copy of the ADSC-SNARK applications repository and the parts of its
-dependencies that its build uses, so the benchmark suite builds the PID-controller
-proof (r1cs_gg_ppzkadscsnark) and the flag proof (r1cs_gg_ppzksnark) from one stable
-libsnark, without network access.
+dependencies that its build uses, so the benchmark suite builds the end zones' input
+proofs (r1cs_gg_ppzkadscsnark) from one stable libsnark, without network access.
 
 Origin: https://github.com/johannes-reinhart/adsc-snark
   commit 8f4621037a99bd1d82fafa24011e265374c6c893
@@ -31,4 +30,7 @@ ethsnarks is LGPL-3.0 (depends/ethsnarks/LICENSE). Keep these files with the cod
 
 Build options used by the suite: -DCURVE=BN254 -DUSE_ASM=OFF -DWITH_PROCPS=OFF
 -DWITH_SUPERCOP=OFF -DOPT_FLAGS=-O2 (the same flags on every platform, so the ZK timings
-stay comparable). Local changes to the vendored sources: none.
+stay comparable). Local changes to the vendored sources:
+- CMakeLists.txt and depends/libsnark/CMakeLists.txt: FIND_PACKAGE(Boost ... program_options)
+  is QUIET instead of REQUIRED. Only the demo and profiling executables use Boost, and none of
+  them is built by default, so machines without libboost-program-options-dev can build.

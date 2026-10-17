@@ -8,8 +8,9 @@
 #            [--label NAME] [--launch "PREFIX"] [--no-ntt]
 #
 #   --backends       default: every build/<backend>[-<ARM_CPU>] that build.sh produced
-#   --rounds         measured rounds of the protocol benches (default 8, plus 1 warm-up)
-#   --stress-rounds  measured rounds of the TFHE stress mode (default 3; ~10 s each on an M-class core)
+#   --rounds         measured rounds of the protocol benches (default 12, plus 1 warm-up:
+#                    every case of the window-lift scenario once)
+#   --stress-rounds  measured rounds of the TFHE stress mode (raw signals; default 12)
 #   --only           run only these benches: zk_selftest bfv_seal bfv_openfhe tfhe_flags
 #                    tfhe_stress tfhe_n32_flags tfhe_n32_stress ntt_seal ntt_openfhe
 #   --label          results/<label>/ (default: the host name, + -<ARM_CPU> when set)
@@ -24,8 +25,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BACKENDS=""
-ROUNDS=8
-STRESS_ROUNDS=3
+ROUNDS=12
+STRESS_ROUNDS=12
 ONLY=""
 LABEL=""
 LAUNCH=""

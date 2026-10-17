@@ -174,8 +174,9 @@ else()
   )
 endif()
 
-# Enable Boost for program_options
-FIND_PACKAGE( Boost 1.40 COMPONENTS program_options REQUIRED )
+# Enable Boost for program_options (optional, downstream: only the demo and profiling
+# executables use it, and none of them is built by default)
+FIND_PACKAGE( Boost 1.40 COMPONENTS program_options QUIET )
 INCLUDE_DIRECTORIES( ${Boost_INCLUDE_DIR} )
 
 add_definitions(

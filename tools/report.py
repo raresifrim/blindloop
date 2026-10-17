@@ -24,8 +24,7 @@ BENCHES = [
     ("tfhe_n32_stress", "TFHE stress, OpenFHE NATIVE_SIZE=32"),
 ]
 BACKEND_ORDER = ["stock", "intel-hexl", "rvv-hexl"]
-TOTALS = [("end_node", "= end-node total"), ("central_node", "= central-node total"),
-          ("end_to_end", "= end to end")]
+ZONES = ["passenger", "driver", "ign", "central"]
 
 
 def ms(x):
@@ -73,7 +72,7 @@ def bench_table(name, backends, data):
     base = runs[0][1]
     cols = [b for b, _ in runs]
     speed = len(runs) > 1 and runs[0][0] == "stock"
-    head = "| node | step | " + " | ".join(f"{c} (ms)" for c in cols)
+    head = "| zone | step | " + " | ".join(f"{c} (ms)" for c in cols)
     head += " | " + " | ".join(f"{c} speed-up" for c in cols[1:]) if speed else ""
     lines = [head + " |", "|" + "---|" * (2 + len(cols) + (len(cols) - 1 if speed else 0))]
 
@@ -84,17 +83,19 @@ def bench_table(name, backends, data):
             cells += [f"{s0 / v:.2f}×" if s0 and v else "–" for v in vals[1:]]
         lines.append(f"| {node} | {label} | " + " | ".join(cells) + " |")
 
-    for node in ("end", "central"):
+    for zone in ZONES:
         for i, st in enumerate(base["steps"]):
-            if st["node"] != node:
+            if st["zone"] != zone:
                 continue
             vals = [median(r["steps"][i]) for _, r in runs]
             if all(v is None for v in vals):
                 continue
-            row(node, st["label"], vals)
-        key, label = TOTALS[0] if node == "end" else TOTALS[1]
-        row(node, f"**{label}**", [r["totals"][key]["median_ms"] for _, r in runs])
-    row("both", f"**{TOTALS[2][1]}**", [r["totals"]["end_to_end"]["median_ms"] for _, r in runs])
+            label = ("[downlink] " if st["phase"] == "downlink" else "") + st["label"]
+            row(zone, label, vals)
+        row(zone, f"**= {zone} total**", [r["totals"][zone]["median_ms"] for _, r in runs])
+    row("all", "**= critical path** (end zones in parallel)",
+        [r["totals"]["critical_path"]["median_ms"] for _, r in runs])
+    row("all", "**= sequential sum**", [r["totals"]["sequential"]["median_ms"] for _, r in runs])
     lines.append("")
     lines.append("Correct rounds: " + ", ".join(f"{b} {r['correct']}/{r['checked']}" for b, r in runs) +
                  f"; medians of {base['rounds_measured']} measured rounds.")
@@ -118,8 +119,9 @@ def summary_rows(backends, data):
             r = data.get((b, name))
             if r:
                 t = r["totals"]
-                rows.append((title, b, t["end_node"]["median_ms"], t["central_node"]["median_ms"],
-                             t["end_to_end"]["median_ms"], f"{r['correct']}/{r['checked']}"))
+                slowest = max(t[z]["median_ms"] for z in ZONES[:3])
+                rows.append((title, b, slowest, t["central"]["median_ms"],
+                             t["critical_path"]["median_ms"], f"{r['correct']}/{r['checked']}"))
     return rows
 
 
@@ -138,7 +140,7 @@ def report(d):
         md.append(f"| {b} | {bi.get('libraries', '?')} | {bi.get('compiler', '?')} | "
                   f"`{bi.get('flags', '?')}` | {bi.get('suite', '?')} |")
     md += ["", "## Summary (median ms per round)", "",
-           "| bench | backend | end node | central node | end to end | correct |", "|---|---|---|---|---|---|"]
+           "| bench | backend | slowest end zone | central | critical path | correct |", "|---|---|---|---|---|---|"]
     rows = summary_rows(backends, data)
     for title, b, e, c, t, ok in rows:
         md.append(f"| {title} | {b} | {ms(e)} | {ms(c)} | {ms(t)} | {ok} |")
@@ -163,7 +165,7 @@ def report(d):
 
 def compare(dirs, results):
     out = dirs[0].parent / "COMPARE.md"
-    md = ["# blindloop: comparison (median ms, end to end)", ""]
+    md = ["# blindloop: comparison (median ms, critical path)", ""]
     labels = [l for l, _ in results]
     keys = []
     for _, rows in results:

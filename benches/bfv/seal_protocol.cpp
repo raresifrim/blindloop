@@ -1,45 +1,77 @@
 // Copyright (c) 2026 Rares Ifrim, National University of Science and Technology POLITEHNICA Bucharest.
 // All rights reserved.
 //
-// seal_protocol.cpp — one IPCEI secure-actuation round, BFV in Microsoft SEAL 4.1.
+// seal_protocol.cpp — one round of the window-lift use case (scenario.hpp), BFV in
+// Microsoft SEAL 4.1.
 //
-// end node   S = 5 sensor readings are booleanized at the source, flag_i = reading_i <
-//            threshold_i. Each flag m_i and its MAC slope s_i = (r_i - m_i) / alpha (fresh
-//            round keys r_i, secret point alpha; --kmac 2 adds a second point) is encrypted
-//            as a seeded LWE ciphertext (a, b) under the coefficient vector of the BFV secret
-//            key, at a carrying modulus q' = the first --qprimes primes of Q (q' > 2 t^2).
-//            Every 'a' is expanded from one 32 B seed, so the uplink carries the seed and the
-//            b residues only. The node proves its PID control law and the flag comparisons in
-//            one ADSC-SNARK over the sensors' authenticated data (readings and flags stay
-//            private), and signs the uplink.
-// central    verifies the signature and the proof (against its own thresholds), re-expands the 'a' vectors, mod-switches
-//            each LWE ciphertext from q' up to Q (exact, q' | Q) and embeds it as an RLWE
-//            ciphertext, promotes it with EvalTrace (depth 0) and evaluates the degree-5 tag
-//            Y(X) = prod_i (m_i + s_i X): Y(0) = AND of the flags (the decision), Y(alpha) =
-//            prod_i r_i (the MAC tag). The tag coefficients are packed into one ciphertext
-//            (Y_j * X^j), mod-switched down to --rprimes primes, serialized and signed.
-// end node   verifies the downlink signature, decrypts, checks Y(alpha) and reads Y(0).
+// Threat model: the end zones (passenger, driver, ign) are trusted with their own data and
+// share key material provisioned into their HSEs; only the central compute (the Process
+// APP) must be blind.
 //
-// Steps (harness ids):
+// provisioning  (not timed) one SEAL context; one BFV secret key shared by the three end
+//               zones; the secret MAC point(s) alpha (--kmac 2 adds a second one) and a
+//               shared PRF key from which every zone derives its per-round MAC secrets
+//               r = PRF(key, round, point, zone, index); the Galois and relin keys at the
+//               central node; one Ed25519 key per node; one ADSC-SNARK setup per zone.
+// end zones     each zone authenticates its sensor data and proves, in its ADSC-SNARK,
+//               the flag bits it derives from it (FlagBits order: passenger pu pd top bot
+//               err, driver ou od cl, ign k). For each bit f_i it encrypts m_i = f_i and
+//               its MAC slope s_i = (r_i - f_i) / alpha (one per MAC point) as seeded LWE
+//               ciphertexts (a, b) under the coefficient vector of the BFV secret key, at a
+//               carrying modulus q' = the first --qprimes primes of Q (q' > 2 t^2). Every
+//               'a' of the zone is expanded from the zone's own fresh 32 B seed, so its
+//               uplink carries the seed and the bit-packed b residues only. No zone knows
+//               anything of the others: 10 + 6 + 2 = 18 LWE values per round at kmac 1.
+// central       verifies each zone's signature and proof, re-expands its 'a' vectors,
+//               mod-switches each LWE ciphertext from q' up to Q (exact, q' | Q), embeds it
+//               as an RLWE ciphertext and promotes it with EvalTrace (depth 0) and the N^-1
+//               scaling. The MAC tags y_i(X) = m_i + s_i X are polynomials in X with
+//               ciphertext coefficients; the central node evaluates the decision on them,
+//                 Y = CmdArith(y_pu, .., y_k)   (scenario.hpp: depth 3, 8 tag products)
+//               with the constant 1 as the plaintext polynomial [1]. Y has degree 6:
+//               Y(0) = cmd in {+1, -1, 0} (Motor+, Motor-, Off) and Y(alpha) =
+//               CmdArith(r_pu, .., r_k), which only the end zones can compute. The 7
+//               coefficients are packed into one ciphertext (Y_j X^j), mod-switched down to
+//               --rprimes primes, serialized and signed.
+// passenger     verifies the downlink signature, decrypts, recomputes the r values from the
+//               PRF key, checks Y(alpha) and reads the motor command Y(0).
+//
+// Steps (harness ids; every end zone runs the uplink steps, the central node's first three
+// add up over the three uplinks):
 //   encode             not recorded: the scaling by floor(q'/t) is fused into encrypt
-//   encrypt            booleanize, draw MAC keys and slopes, seeded-LWE encrypt S*(1+kmac) values
+//   encrypt            derive the MAC secrets and slopes, seeded-LWE encrypt bits*(1+kmac) values
 //   compress           seed || bit-packed b residues -> uplink FHE payload
-//   adsc_authenticate  zk::AdscProver::Authenticate(round, readings): every sensor signs its data
-//   adsc_prove         zk::AdscProver::Prove(thresholds): PID control law + flag comparisons
-//   sign_uplink        Ed25519 over round || PID outputs || FHE payload
-//   verify_uplink      Ed25519 + round number (replay)
-//   adsc_verify        zk::AdscVerifier for the central node's thresholds (chained state commitment)
-//   decompress         unpack b, expand a from the seed, mod-switch up and embed into RLWE
-//   evaluate           EvalTrace promote, N^-1 scaling, degree-5 tag(s)
+//   adsc_authenticate  zk::AdscProver::Authenticate(SensorValues): every sensor signs its data
+//   adsc_prove         zk::AdscProver::Prove(): the zone's flag bits from the authenticated data
+//   sign_uplink        Ed25519 over round || FHE payload
+//   verify_uplink      Ed25519 + round number (replay), per zone
+//   adsc_verify        the zone's zk::AdscVerifier (chained state commitment), per zone
+//   decompress         unpack b, expand a, mod-switch up, embed, EvalTrace promote, N^-1, per zone
+//   evaluate           CmdArith on the polynomial tags (each MAC point)
 //   compress_downlink  pack the tag coefficients, mod-switch to --rprimes, serialize
 //   sign_downlink      Ed25519 over round || downlink ciphertext
 //   verify_downlink    Ed25519 + round number
 //   decrypt            deserialize + BFV decrypt
-//   check_result       Y(alpha) == prod r_i (each MAC point), read the decision Y(0)
+//   check_result       Y(alpha) == CmdArith(r) (each MAC point), read the command Y(0)
+//
+// Parameters: N = 16384 with SEAL's BFVDefault chain (8 data primes + the special prime),
+// t a 32-bit batching prime (MAC forgery <= 6/t ~ 2^-29.4 per point). The noise is set by
+// the lift: after the mod-switch q' -> Q the invariant noise is ~ t^2 / q' (the slopes are
+// full Z_t values), the trace adds log2 N bits and the N^-1 scaling ~ log2 t; each of the
+// three product levels then costs ~ log2 t + log2 N. The old degree-5 tree at --qprimes 5
+// left ~2 bits; the CmdArith circuit sums more products per coefficient and has a
+// depth-2 x depth-2 last level, and at --qprimes 5 it leaves 0 bits (it still decrypts,
+// with no margin). The default is --qprimes 6, one more prime of the carrying modulus
+// (+6 B per LWE value): 48 bits measured. The downlink stays at --rprimes 2, whose
+// mod-switch rounding caps the budget at ~55 bits (above the circuit's 48; --qprimes 7
+// reaches that cap). --rprimes 1 halves the downlink but caps the budget at ~7 bits. The
+// measured budget is recorded as downlink_noise_budget_bits (minimum over the rounds).
 //
 //   bfv_seal [--rounds R] [--warmup W] [--json FILE] [--quiet]
-//            [--N 16384] [--pbits 32] [--qprimes 5] [--rprimes 2] [--kmac 1|2] [--limbbits 0]
+//            [--N 16384] [--pbits 32] [--qprimes 6] [--rprimes 2] [--kmac 1|2] [--limbbits 0]
 // The defaults are the deployable configuration; --limbbits 0 is SEAL's BFVDefault chain.
+// The 12 measured rounds of the default run are exactly the 12 cases of the scenario (the
+// warm-up rounds draw from a separate generator).
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -52,6 +84,7 @@
 #include <vector>
 
 #include "ipcei/harness.hpp"
+#include "ipcei/scenario.hpp"
 #include "ipcei/sig.hpp"
 #include "ipcei/zk.hpp"
 #include "seal/seal.h"
@@ -62,14 +95,15 @@
 #endif
 
 using namespace seal;
+using ipcei::Zone;
 namespace zk = ipcei::zk;
+namespace window = ipcei::window;
 
 namespace {
 
-constexpr int kSensors = 5;      // S: one flag per sensor, degree-5 decision
-constexpr int kReadingBits = 32;  // the readings' range check in the ADSC circuit
+constexpr int kTagDegree = 6;  // degree of CmdArith in the inputs: of Y(X)
 constexpr size_t kSeedBytes = 32;
-constexpr size_t kUplinkHeader = 4 + 3 * 8;  // round, PID outputs
+constexpr size_t kUplinkHeader = 4;  // round
 
 using u128 = unsigned __int128;
 
@@ -88,27 +122,36 @@ uint64_t InvMod(uint64_t a, uint64_t p) { return PowMod(a, p - 2, p); }  // p pr
 void PutU32(std::vector<uint8_t>& o, uint32_t v) {
 	for (int i = 0; i < 4; ++i) o.push_back((uint8_t)(v >> (8 * i)));
 }
-void PutU64(std::vector<uint8_t>& o, uint64_t v) {
-	for (int i = 0; i < 8; ++i) o.push_back((uint8_t)(v >> (8 * i)));
-}
 uint32_t GetU32(const uint8_t* p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+
+/// SplitMix64 finalizer: the mixing of the benchmark PRF below.
+uint64_t Mix(uint64_t x) {
+	x += 0x9e3779b97f4a7c15ULL;
+	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+	x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+	return x ^ (x >> 31);
+}
+
+/// The flag bits a zone sends (FlagBits order).
+size_t ZoneBits(Zone z) {
+	return z == Zone::Passenger ? window::kPassengerFlags : z == Zone::Driver ? window::kDriverFlags : window::kIgnFlags;
+}
+size_t ZoneIndex(Zone z) { return z == Zone::Passenger ? 0 : z == Zone::Driver ? 1 : 2; }
 
 struct Config {
 	size_t N = 16384;
 	int pbits = 32;
-	int qprimes = 5;
+	int qprimes = 6;
 	int rprimes = 2;
 	int kmac = 1;
 	int limb_bits = 0;
 };
 
-/// Public parameters shared by both nodes: the BFV context, the carrying modulus q'
-/// and the seed expander of the seeded-LWE uplink.
+/// Public parameters shared by every node: the BFV context, the carrying modulus q'
+/// and the seed expander of the seeded-LWE uplinks.
 class Bfv {
 public:
-	explicit Bfv(const Config& c)
-		: N(c.N), kmac(c.kmac), rprimes((size_t)c.rprimes), nvals((size_t)kSensors * (1 + c.kmac)),
-		  context(MakeParms(c)) {
+	explicit Bfv(const Config& c) : N(c.N), kmac(c.kmac), rprimes((size_t)c.rprimes), context(MakeParms(c)) {
 		if (!context.parameters_set()) throw std::runtime_error("invalid BFV parameters");
 		coeff = context.first_context_data()->parms().coeff_modulus();
 		L = coeff.size();
@@ -160,13 +203,14 @@ public:
 		a.resize(N);
 		for (size_t j = 0; j < N; ++j) a[j] = g() % qi;
 	}
+	/// LWE values of a zone: its bits m_i, then the slopes s_i of each MAC point.
+	size_t Values(Zone z) const { return ZoneBits(z) * (size_t)(1 + kmac); }
 	/// Downlink slot of coefficient j of the tag at MAC point p (Y_p(0) = Y_0(0) is sent once).
-	size_t Slot(int p, int j) const { return j == 0 ? 0 : (size_t)p * kSensors + (size_t)j; }
+	size_t Slot(int p, int j) const { return j == 0 ? 0 : (size_t)p * kTagDegree + (size_t)j; }
 
 	const size_t N;
 	const int kmac;
 	const size_t rprimes;
-	const size_t nvals;  // S flags + S slopes per MAC point
 	SEALContext context;
 	std::vector<Modulus> coeff;  // data-level chain
 	size_t L = 0, Lp = 0, qp_bits = 0, Q_bits = 0;
@@ -189,13 +233,61 @@ private:
 	}
 };
 
+/// What the end zones' HSEs hold (shared by the three zones, provisioned once).
+struct Provisioning {
+	SecretKey sk;
+	std::vector<int> s;                 // ternary coefficient vector of sk: the LWE key
+	std::vector<uint64_t> alpha, alpha_inv;  // the MAC points
+	uint64_t prf_key = 0;
+
+	/// The MAC secret of variable (zone, i) at point p in this round, in [1, t).
+	uint64_t MacSecret(uint64_t t, uint32_t round, int p, Zone z, size_t i) const {
+		const uint64_t h = Mix(Mix(prf_key ^ Mix(round)) ^ ((uint64_t)p << 16 | (uint64_t)ZoneIndex(z) << 8 | i));
+		return 1 + h % (t - 1);
+	}
+};
+
 struct EvalKeys {
 	RelinKeys relin;
 	GaloisKeys galois;
 };
 
+/// One-time setup: the shared secret key and MAC key of the end zones, and the
+/// evaluation keys of the central node.
+Provisioning Provision(const Bfv& bfv, KeyGenerator& keygen, EvalKeys& keys) {
+	Provisioning pv;
+	pv.sk = keygen.secret_key();
+	// ternary secret s from data prime 0 (the LWE uplink key)
+	const size_t N = bfv.N;
+	std::vector<uint64_t> s0(pv.sk.data().data(), pv.sk.data().data() + N);
+	util::inverse_ntt_negacyclic_harvey(s0.data(), bfv.context.key_context_data()->small_ntt_tables()[0]);
+	const uint64_t q0 = bfv.coeff[0].value();
+	pv.s.resize(N);
+	for (size_t j = 0; j < N; ++j) pv.s[j] = s0[j] == 1 ? 1 : (s0[j] == q0 - 1 ? -1 : 0);
+	std::mt19937_64 rng(7);
+	for (int p = 0; p < bfv.kmac; ++p) {
+		pv.alpha.push_back(rng() % (bfv.t - 1) + 1);
+		pv.alpha_inv.push_back(InvMod(pv.alpha.back(), bfv.t));
+	}
+	pv.prf_key = rng();
+
+	keygen.create_relin_keys(keys.relin);
+	std::vector<uint32_t> elts;
+	for (size_t n = bfv.N; n >= 2; n /= 2) elts.push_back((uint32_t)(n + 1));
+	keygen.create_galois_keys(elts, keys.galois);
+	return pv;
+}
+
+/// Z_t, for the MAC check: CmdArith over the r values.
+struct Zt {
+	uint64_t v, t;
+};
+Zt operator+(const Zt& a, const Zt& b) { return {(a.v + b.v) % a.t, a.t}; }
+Zt operator-(const Zt& a, const Zt& b) { return {(a.v + a.t - b.v) % a.t, a.t}; }
+Zt operator*(const Zt& a, const Zt& b) { return {MulMod(a.v, b.v, a.t), a.t}; }
+
 struct UplinkMsg {
-	std::vector<uint8_t> bytes;  // signed: header || FHE payload (seed || packed b)
+	std::vector<uint8_t> bytes;  // signed: round || FHE payload (seed || packed b)
 	std::vector<uint8_t> sig;
 	zk::AdscMessage adsc;
 	size_t payload_bytes = 0;
@@ -207,65 +299,47 @@ struct DownlinkMsg {
 };
 
 struct RoundOutcome {
-	bool sig_ok = false, mac_ok = false;
-	uint64_t decision = 0;
+	bool sig_ok = false, mac_ok = false, valid = false;  // valid: Y(0) is +1, -1 or 0
+	window::Cmd cmd = window::Cmd::Off;
 };
 
-// ------------------------------------------------------------------ end node
+// ------------------------------------------------------------------ end zones
 
-class EndNode : public ipcei::Participant {
+/// An end zone: authenticates and proves its bits, encrypts them with their MAC slopes
+/// as seeded LWE under the shared key, and signs its uplink.
+class EndZoneNode : public ipcei::Participant {
 public:
-	EndNode(ipcei::Recorder& rec, const Bfv& bfv, const zk::AdscSetup& adsc)
-		: Participant(rec), bfv_(bfv), keygen_(bfv.context), sk_(keygen_.secret_key()), dec_(bfv.context, sk_),
-		  adsc_(adsc), rng_(7) {
-		// ternary secret s from data prime 0 (the LWE uplink key)
-		const size_t N = bfv_.N;
-		std::vector<uint64_t> s0(sk_.data().data(), sk_.data().data() + N);
-		util::inverse_ntt_negacyclic_harvey(s0.data(), bfv.context.key_context_data()->small_ntt_tables()[0]);
-		const uint64_t q0 = bfv_.coeff[0].value();
-		s_.resize(N);
-		for (size_t j = 0; j < N; ++j) s_[j] = s0[j] == 1 ? 1 : (s0[j] == q0 - 1 ? -1 : 0);
-		for (int p = 0; p < bfv_.kmac; ++p) {
-			alpha_.push_back(rng_() % (bfv_.t - 1) + 1);
-			alpha_inv_.push_back(InvMod(alpha_.back(), bfv_.t));
-		}
-		r_.assign(bfv_.kmac, std::vector<uint64_t>(kSensors));
-	}
+	EndZoneNode(ipcei::Recorder& rec, Zone zone, const Bfv& bfv, const Provisioning& pv, const zk::AdscSetup& adsc)
+		: Participant(rec, zone), bfv_(bfv), pv_(pv), adsc_(adsc), rng_(100 + ZoneIndex(zone)) {}
 
-	/// One-time setup: the evaluation keys the central node needs.
-	EvalKeys MakeEvalKeys() {
-		EvalKeys k;
-		keygen_.create_relin_keys(k.relin);
-		std::vector<uint32_t> elts;
-		for (size_t n = bfv_.N; n >= 2; n /= 2) elts.push_back((uint32_t)(n + 1));
-		keygen_.create_galois_keys(elts, k.galois);
-		return k;
-	}
 	const std::vector<uint8_t>& SigPublicKey() const { return sig_.PublicKey(); }
-	void SetPeer(const std::vector<uint8_t>& central_pub) { peer_ = central_pub; }
 
-	UplinkMsg Send(int round, const std::vector<uint32_t>& readings, const std::vector<uint32_t>& thresholds) {
+	/// One round: this zone sees only its own sensor values.
+	UplinkMsg Send(int round, const window::Inputs& in) {
 		const uint64_t t = bfv_.t;
-		std::vector<uint8_t> flags(kSensors);
+		const size_t nb = ZoneBits(zone_), nv = bfv_.Values(zone_);
+		UplinkMsg up;
+		timed("adsc_authenticate", [&] { adsc_.Authenticate(window::SensorValues(zone_, in)); });
+		up.adsc = timed("adsc_prove", [&] { return adsc_.Prove(); });
+		const std::vector<uint8_t>& bits = adsc_.bits();  // what the circuit derived: what the zone encrypts
+		if (bits.size() != nb) throw std::runtime_error("ADSC bits do not match the zone's flags");
+
 		uint8_t seed[kSeedBytes];
-		std::vector<std::vector<uint64_t>> b(bfv_.nvals);
+		std::vector<std::vector<uint64_t>> b(nv);
 		timed("encrypt", [&] {
-			std::vector<uint64_t> val(bfv_.nvals);
-			for (int i = 0; i < kSensors; ++i) {
-				flags[i] = readings[i] < thresholds[i];
-				val[i] = flags[i];
-			}
+			std::vector<uint64_t> val(nv);
+			for (size_t i = 0; i < nb; ++i) val[i] = bits[i];
 			for (int p = 0; p < bfv_.kmac; ++p)
-				for (int i = 0; i < kSensors; ++i) {
-					r_[p][i] = rng_() % (t - 1) + 1;
-					val[(size_t)(1 + p) * kSensors + i] = MulMod((r_[p][i] + t - val[i]) % t, alpha_inv_[p], t);
+				for (size_t i = 0; i < nb; ++i) {
+					const uint64_t r = pv_.MacSecret(t, (uint32_t)round, p, zone_, i);
+					val[(size_t)(1 + p) * nb + i] = MulMod((r + t - val[i]) % t, pv_.alpha_inv[p], t);
 				}
 			for (size_t w = 0; w < kSeedBytes; w += 8) {
 				const uint64_t v = rng_();
 				for (int i = 0; i < 8; ++i) seed[w + i] = (uint8_t)(v >> (8 * i));
 			}
 			const uint64_t key = Bfv::SeedKey(seed);
-			for (size_t v = 0; v < bfv_.nvals; ++v) LweEncrypt(val[v], key, v, b[v]);
+			for (size_t v = 0; v < nv; ++v) LweEncrypt(val[v], key, v, b[v]);
 		});
 
 		std::vector<uint8_t> payload;
@@ -282,55 +356,17 @@ public:
 			if (nbits) payload.push_back((uint8_t)acc);
 		});
 
-		UplinkMsg up;
-		timed("adsc_authenticate", [&] { adsc_.Authenticate(round, readings); });
-		up.adsc = timed("adsc_prove", [&] { return adsc_.Prove(thresholds); });
 		timed("sign_uplink", [&] {
 			up.bytes.reserve(kUplinkHeader + payload.size());
 			PutU32(up.bytes, (uint32_t)round);
-			for (long o : up.adsc.output) PutU64(up.bytes, (uint64_t)o);
 			up.bytes.insert(up.bytes.end(), payload.begin(), payload.end());
 			up.sig = sig_.Sign(up.bytes);
 		});
 		up.payload_bytes = payload.size();
-		round_ = (uint32_t)round;
 		return up;
 	}
 
-	RoundOutcome Receive(const DownlinkMsg& dl) {
-		RoundOutcome out;
-		out.sig_ok = timed("verify_downlink", [&] {
-			return dl.bytes.size() > 4 && GetU32(dl.bytes.data()) == round_ &&
-				ipcei::Ed25519::Verify(peer_, dl.bytes, dl.sig);
-		});
-		Ciphertext ct;
-		Plaintext pt;
-		timed("decrypt", [&] {
-			ct.load(bfv_.context, reinterpret_cast<const seal_byte*>(dl.bytes.data() + 4), dl.bytes.size() - 4);
-			dec_.decrypt(ct, pt);
-		});
-		if (noise_bits_ < 0) noise_bits_ = dec_.invariant_noise_budget(ct);
-		timed("check_result", [&] {
-			const uint64_t t = bfv_.t;
-			auto coef = [&](size_t k) { return k < pt.coeff_count() ? pt[k] : 0; };
-			out.mac_ok = true;
-			for (int p = 0; p < bfv_.kmac; ++p) {
-				uint64_t tag = 1, y = 0, ap = 1;  // Y_p(alpha_p) = sum_j c_j alpha_p^j
-				for (int i = 0; i < kSensors; ++i) tag = MulMod(tag, r_[p][i], t);
-				for (int j = 0; j <= kSensors; ++j) {
-					y = (y + MulMod(coef(bfv_.Slot(p, j)), ap, t)) % t;
-					ap = MulMod(ap, alpha_[p], t);
-				}
-				out.mac_ok = out.mac_ok && y == tag;
-			}
-			out.decision = coef(0);
-		});
-		return out;
-	}
-
-	int noise_bits() const { return noise_bits_; }
-
-private:
+protected:
 	// b = Delta' m + e - <a, s>  (mod q_i), one error e in [-8, 8] shared by all primes
 	void LweEncrypt(uint64_t m, uint64_t key, size_t ctr, std::vector<uint64_t>& b) {
 		b.assign(bfv_.Lp, 0);
@@ -340,8 +376,8 @@ private:
 			bfv_.ExpandA(key, ctr, i, a_);
 			uint64_t dot = 0;
 			for (size_t j = 0; j < bfv_.N; ++j) {
-				if (s_[j] == 0) continue;
-				dot = s_[j] == 1 ? (dot + a_[j]) % qi : (dot + (qi - a_[j])) % qi;
+				if (pv_.s[j] == 0) continue;
+				dot = pv_.s[j] == 1 ? (dot + a_[j]) % qi : (dot + (qi - a_[j])) % qi;
 			}
 			const uint64_t emod = e >= 0 ? (uint64_t)e % qi : qi - (uint64_t)(-e) % qi;
 			const uint64_t dm = MulMod(bfv_.deltap[i], m % qi, qi);
@@ -350,30 +386,180 @@ private:
 	}
 
 	const Bfv& bfv_;
-	KeyGenerator keygen_;
-	SecretKey sk_;
-	Decryptor dec_;
-	std::vector<int> s_;
+	const Provisioning pv_;  // this zone's HSE copy of the shared key material
 	zk::AdscProver adsc_;
 	ipcei::Ed25519 sig_;
-	std::vector<uint8_t> peer_;
 	std::mt19937_64 rng_;
-	std::vector<uint64_t> alpha_, alpha_inv_;
-	std::vector<std::vector<uint64_t>> r_;  // this round's MAC keys, per MAC point
 	std::vector<uint64_t> a_;
-	uint32_t round_ = 0;
+};
+
+/// The actuator: also receives, verifies and checks the downlink.
+class PassengerNode : public EndZoneNode {
+public:
+	PassengerNode(ipcei::Recorder& rec, const Bfv& bfv, const Provisioning& pv, const zk::AdscSetup& adsc)
+		: EndZoneNode(rec, Zone::Passenger, bfv, pv, adsc), dec_(bfv.context, pv_.sk) {}
+	void SetPeer(const std::vector<uint8_t>& central_pub) { peer_ = central_pub; }
+
+	RoundOutcome Receive(int round, const DownlinkMsg& dl) {
+		RoundOutcome out;
+		out.sig_ok = timed("verify_downlink", [&] {
+			return dl.bytes.size() > 4 && GetU32(dl.bytes.data()) == (uint32_t)round &&
+				ipcei::Ed25519::Verify(peer_, dl.bytes, dl.sig);
+		});
+		Ciphertext ct;
+		Plaintext pt;
+		timed("decrypt", [&] {
+			ct.load(bfv_.context, reinterpret_cast<const seal_byte*>(dl.bytes.data() + 4), dl.bytes.size() - 4);
+			dec_.decrypt(ct, pt);
+		});
+		const int budget = dec_.invariant_noise_budget(ct);
+		noise_bits_ = noise_bits_ < 0 ? budget : std::min(noise_bits_, budget);
+		timed("check_result", [&] {
+			const uint64_t t = bfv_.t;
+			auto coef = [&](size_t k) { return k < pt.coeff_count() ? pt[k] : 0; };
+			auto r = [&](int p, Zone z, size_t i) { return Zt{pv_.MacSecret(t, (uint32_t)round, p, z, i), t}; };
+			out.mac_ok = true;
+			for (int p = 0; p < bfv_.kmac; ++p) {
+				using namespace window;
+				const Zt tag = CmdArith(r(p, Zone::Passenger, kPu), r(p, Zone::Passenger, kPd),
+						r(p, Zone::Passenger, kTopFlag), r(p, Zone::Passenger, kBotFlag), r(p, Zone::Passenger, kErr),
+						r(p, Zone::Driver, kOu), r(p, Zone::Driver, kOd), r(p, Zone::Driver, kCl), r(p, Zone::Ign, kK),
+						Zt{1, t});
+				uint64_t y = 0, ap = 1;  // Y_p(alpha_p) = sum_j Y_j alpha_p^j
+				for (int j = 0; j <= kTagDegree; ++j) {
+					y = (y + MulMod(coef(bfv_.Slot(p, j)), ap, t)) % t;
+					ap = MulMod(ap, pv_.alpha[p], t);
+				}
+				out.mac_ok = out.mac_ok && y == tag.v;
+			}
+			const uint64_t y0 = coef(0);
+			out.valid = y0 == 0 || y0 == 1 || y0 == t - 1;
+			out.cmd = y0 == 1 ? window::Cmd::MotorUp : y0 == t - 1 ? window::Cmd::MotorDown : window::Cmd::Off;
+		});
+		return out;
+	}
+
+	int noise_bits() const { return noise_bits_; }
+
+private:
+	Decryptor dec_;
+	std::vector<uint8_t> peer_;
 	int noise_bits_ = -1;
+};
+
+class DriverNode : public EndZoneNode {
+public:
+	DriverNode(ipcei::Recorder& rec, const Bfv& bfv, const Provisioning& pv, const zk::AdscSetup& adsc)
+		: EndZoneNode(rec, Zone::Driver, bfv, pv, adsc) {}
+};
+
+class IgnNode : public EndZoneNode {
+public:
+	IgnNode(ipcei::Recorder& rec, const Bfv& bfv, const Provisioning& pv, const zk::AdscSetup& adsc)
+		: EndZoneNode(rec, Zone::Ign, bfv, pv, adsc) {}
 };
 
 // ------------------------------------------------------------------ central node
 
+class TagArith;
+
+/// A MAC tag: a polynomial in X with ciphertext coefficients (X^0 first), or the
+/// plaintext polynomial [1].
+struct Tag {
+	TagArith* ar = nullptr;
+	std::vector<Ciphertext> c;
+	bool one = false;
+};
+
+/// Polynomial arithmetic on tags. The products of one output coefficient are summed
+/// before a single relinearization.
+class TagArith {
+public:
+	TagArith(Evaluator& ev, const RelinKeys& relin) : ev_(ev), relin_(relin), one_(1) { one_[0] = 1; }
+
+	Tag One() { return Tag{this, {}, true}; }
+
+	Tag Add(const Tag& a, const Tag& b, bool sub) {
+		if (a.one && b.one) throw std::logic_error("tag: 1 +- 1");
+		if (b.one) {  // a +- 1
+			Tag r = a;
+			if (sub) ev_.sub_plain_inplace(r.c[0], one_);
+			else ev_.add_plain_inplace(r.c[0], one_);
+			return r;
+		}
+		if (a.one) {  // 1 +- b
+			Tag r = b;
+			if (sub)
+				for (auto& x : r.c) ev_.negate_inplace(x);
+			ev_.add_plain_inplace(r.c[0], one_);
+			return r;
+		}
+		Tag r{this, std::vector<Ciphertext>(std::max(a.c.size(), b.c.size())), false};
+		for (size_t j = 0; j < r.c.size(); ++j) {
+			if (j < a.c.size() && j < b.c.size()) {
+				if (sub) ev_.sub(a.c[j], b.c[j], r.c[j]);
+				else ev_.add(a.c[j], b.c[j], r.c[j]);
+			} else if (j < a.c.size()) {
+				r.c[j] = a.c[j];
+			} else {
+				r.c[j] = b.c[j];
+				if (sub) ev_.negate_inplace(r.c[j]);
+			}
+		}
+		return r;
+	}
+
+	Tag Mul(const Tag& a, const Tag& b) {
+		if (a.one) return b;
+		if (b.one) return a;
+		Tag r{this, std::vector<Ciphertext>(a.c.size() + b.c.size() - 1), false};
+		std::vector<bool> init(r.c.size(), false);
+		for (size_t i = 0; i < a.c.size(); ++i)
+			for (size_t j = 0; j < b.c.size(); ++j) {
+				Ciphertext t;
+				ev_.multiply(a.c[i], b.c[j], t);
+				++mults_;
+				if (!init[i + j]) {
+					r.c[i + j] = std::move(t);
+					init[i + j] = true;
+				} else {
+					ev_.add_inplace(r.c[i + j], t);
+				}
+			}
+		for (auto& x : r.c) {
+			ev_.relinearize_inplace(x, relin_);
+			++relins_;
+		}
+		return r;
+	}
+
+	long mults() const { return mults_; }
+	long relins() const { return relins_; }
+
+private:
+	Evaluator& ev_;
+	const RelinKeys& relin_;
+	Plaintext one_;
+	long mults_ = 0, relins_ = 0;
+};
+
+Tag operator+(const Tag& a, const Tag& b) { return a.ar->Add(a, b, false); }
+Tag operator-(const Tag& a, const Tag& b) { return a.ar->Add(a, b, true); }
+Tag operator*(const Tag& a, const Tag& b) { return a.ar->Mul(a, b); }
+
+/// The Process APP: blind evaluation of the motor command on the three uplinks.
 class CentralNode : public ipcei::Participant {
 public:
-	CentralNode(ipcei::Recorder& rec, const Bfv& bfv, EvalKeys keys, const zk::AdscSetup& adsc)
-		: Participant(rec), bfv_(bfv), keys_(std::move(keys)), ev_(bfv.context), adsc_(adsc) {
+	CentralNode(ipcei::Recorder& rec, const Bfv& bfv, EvalKeys keys, const zk::AdscSetup& adsc_p,
+			const zk::AdscSetup& adsc_d, const zk::AdscSetup& adsc_i)
+		: Participant(rec, Zone::Central), bfv_(bfv), keys_(std::move(keys)), ev_(bfv.context),
+		  ar_(ev_, keys_.relin) {
+		adsc_[0].reset(new zk::AdscVerifier(adsc_p));
+		adsc_[1].reset(new zk::AdscVerifier(adsc_d));
+		adsc_[2].reset(new zk::AdscVerifier(adsc_i));
 		ninv_.resize(1);
 		ninv_[0] = bfv_.Ninv;
-		const size_t slots = bfv_.Slot(bfv_.kmac - 1, kSensors) + 1;
+		const size_t slots = bfv_.Slot(bfv_.kmac - 1, kTagDegree) + 1;
 		mono_.resize(slots);
 		for (size_t k = 1; k < slots; ++k) {
 			mono_[k].resize(k + 1);
@@ -381,59 +567,69 @@ public:
 		}
 	}
 	const std::vector<uint8_t>& SigPublicKey() const { return sig_.PublicKey(); }
-	void SetPeer(const std::vector<uint8_t>& end_pub) { peer_ = end_pub; }
-	bool accepted() const { return accepted_; }
+	void SetPeer(Zone z, const std::vector<uint8_t>& pub) { peer_[ZoneIndex(z)] = pub; }
+	/// Every uplink of the last round passed its signature and proof check.
+	bool accepted() const { return accepted_[0] && accepted_[1] && accepted_[2]; }
+	const TagArith& arith() const { return ar_; }
 
-	DownlinkMsg Process(const UplinkMsg& up, const std::vector<uint32_t>& thresholds) {
-		const size_t N = bfv_.N;
+	/// One zone's uplink: verify, then lift its LWE values into promoted ciphertexts.
+	void Receive(Zone z, const UplinkMsg& up) {
+		const size_t zi = ZoneIndex(z), nb = ZoneBits(z), nv = bfv_.Values(z);
+		const size_t want = kUplinkHeader + kSeedBytes + (nv * bfv_.qp_bits + 7) / 8;
 		const bool sig_ok = timed("verify_uplink", [&] {
-			return up.bytes.size() > kUplinkHeader && GetU32(up.bytes.data()) == round_ &&
-				ipcei::Ed25519::Verify(peer_, up.bytes, up.sig);
+			return up.bytes.size() >= want && GetU32(up.bytes.data()) == round_ &&
+				ipcei::Ed25519::Verify(peer_[zi], up.bytes, up.sig);
 		});
-		const bool adsc_ok = timed("adsc_verify", [&] { return adsc_.Verify(up.adsc, thresholds); });
-		accepted_ = sig_ok && adsc_ok;
+		const bool adsc_ok = timed("adsc_verify", [&] { return adsc_[zi]->Verify(up.adsc); });
+		accepted_[zi] = sig_ok && adsc_ok;
 
-		std::vector<Ciphertext> ct(bfv_.nvals);
+		std::vector<Ciphertext> y(nv);
 		timed("decompress", [&] {
+			const size_t N = bfv_.N;
 			const uint8_t* p = up.bytes.data() + kUplinkHeader;
 			const uint64_t key = Bfv::SeedKey(p);
 			p += kSeedBytes;
 			u128 acc = 0;
 			int nbits = 0;
 			std::vector<uint64_t> b(bfv_.Lp);
-			for (size_t v = 0; v < bfv_.nvals; ++v) {
+			Ciphertext ct;
+			for (size_t v = 0; v < nv; ++v) {
 				for (size_t i = 0; i < bfv_.Lp; ++i) {
 					for (; nbits < bfv_.qbits[i]; nbits += 8) acc |= (u128)*p++ << nbits;
 					b[i] = (uint64_t)(acc & (((u128)1 << bfv_.qbits[i]) - 1));
 					acc >>= bfv_.qbits[i];
 					nbits -= bfv_.qbits[i];
 				}
-				Embed(b, key, v, N, ct[v]);
+				Embed(b, key, v, N, ct);
+				ev_.multiply_plain(EvalTrace(ct), ninv_, y[v]);
 			}
 		});
+		// y_i(X) = m_i + s_i X, per MAC point
+		tags_[zi].assign(bfv_.kmac, {});
+		for (int pt = 0; pt < bfv_.kmac; ++pt)
+			for (size_t i = 0; i < nb; ++i) tags_[zi][pt].push_back(Tag{&ar_, {y[i], y[(size_t)(1 + pt) * nb + i]}, false});
+	}
 
-		std::vector<std::vector<Ciphertext>> Y(bfv_.kmac);
+	/// After the three uplinks: evaluate, compress and sign the downlink.
+	DownlinkMsg Respond() {
+		std::vector<Tag> Y(bfv_.kmac);
 		timed("evaluate", [&] {
-			std::vector<Ciphertext> y(bfv_.nvals);
-			for (size_t v = 0; v < bfv_.nvals; ++v) {
-				Ciphertext prom = EvalTrace(ct[v]);
-				ev_.multiply_plain(prom, ninv_, y[v]);
-			}
 			for (int p = 0; p < bfv_.kmac; ++p) {
-				// y_i(X) = m_i + s_i X;  Y = ((y0 y1)(y2 y3)) y4
-				std::vector<std::vector<Ciphertext>> f(kSensors);
-				for (int i = 0; i < kSensors; ++i) f[i] = {y[i], y[(size_t)(1 + p) * kSensors + i]};
-				Y[p] = PolyMul(PolyMul(PolyMul(f[0], f[1]), PolyMul(f[2], f[3])), f[4]);
+				using namespace window;
+				const std::vector<Tag>&ps = tags_[0][p], &dr = tags_[1][p], &ig = tags_[2][p];
+				Y[p] = CmdArith(ps[kPu], ps[kPd], ps[kTopFlag], ps[kBotFlag], ps[kErr], dr[kOu], dr[kOd], dr[kCl],
+						ig[kK], ar_.One());
+				if (Y[p].c.size() != kTagDegree + 1) throw std::logic_error("unexpected tag degree");
 			}
 		});
 
 		DownlinkMsg dl;
 		timed("compress_downlink", [&] {
-			Ciphertext packed = Y[0][0];
+			Ciphertext packed = Y[0].c[0];
 			for (int p = 0; p < bfv_.kmac; ++p)
-				for (int j = 1; j <= kSensors; ++j) {
+				for (int j = 1; j <= kTagDegree; ++j) {
 					Ciphertext sh;
-					ev_.multiply_plain(Y[p][j], mono_[bfv_.Slot(p, j)], sh);
+					ev_.multiply_plain(Y[p].c[j], mono_[bfv_.Slot(p, j)], sh);
 					ev_.add_inplace(packed, sh);
 				}
 			while (bfv_.context.get_context_data(packed.parms_id())->parms().coeff_modulus().size() > bfv_.rprimes)
@@ -477,36 +673,20 @@ private:
 		}
 		return acc;
 	}
-	// product of two encrypted polynomials in X (coefficient vectors of ciphertexts)
-	std::vector<Ciphertext> PolyMul(const std::vector<Ciphertext>& a, const std::vector<Ciphertext>& b) {
-		std::vector<Ciphertext> out(a.size() + b.size() - 1);
-		std::vector<bool> init(out.size(), false);
-		for (size_t i = 0; i < a.size(); ++i)
-			for (size_t j = 0; j < b.size(); ++j) {
-				Ciphertext t;
-				ev_.multiply(a[i], b[j], t);
-				ev_.relinearize_inplace(t, keys_.relin);
-				if (!init[i + j]) {
-					out[i + j] = std::move(t);
-					init[i + j] = true;
-				} else {
-					ev_.add_inplace(out[i + j], t);
-				}
-			}
-		return out;
-	}
 
 	const Bfv& bfv_;
 	EvalKeys keys_;
 	Evaluator ev_;
-	zk::AdscVerifier adsc_;
+	TagArith ar_;
+	std::unique_ptr<zk::AdscVerifier> adsc_[3];
 	ipcei::Ed25519 sig_;
-	std::vector<uint8_t> peer_;
+	std::vector<uint8_t> peer_[3];
+	std::vector<std::vector<Tag>> tags_[3];  // per zone, per MAC point: the zone's tags in FlagBits order
 	Plaintext ninv_;
 	std::vector<Plaintext> mono_;  // X^k, k = 1 .. last downlink slot
 	std::vector<uint64_t> a_;
 	uint32_t round_ = 0;
-	bool accepted_ = false;
+	bool accepted_[3] = {false, false, false};
 };
 
 Config ParseConfig(const std::vector<std::string>& args) {
@@ -539,49 +719,56 @@ Config ParseConfig(const std::vector<std::string>& args) {
 }  // namespace
 
 int main(int argc, char** argv) {
-	const ipcei::Options opts = ipcei::Options::Parse(argc, argv, 8);
+	const ipcei::Options opts = ipcei::Options::Parse(argc, argv, window::Rounds::kCases);
 	const Config cfg = ParseConfig(opts.rest);
 	ipcei::Recorder rec(opts.warmup);
 
-	// one-time setup (not reported): parameters, keys, proving / verification keys
+	// provisioning (not reported): parameters, the end zones' shared keys, evaluation keys,
+	// signature keys, the ADSC proving / verification keys of every zone
 	Bfv bfv(cfg);
-	const zk::AdscSetup adsc_setup(kSensors, kReadingBits);
-	EndNode end(rec, bfv, adsc_setup);
-	CentralNode central(rec, bfv, end.MakeEvalKeys(), adsc_setup);
-	end.SetPeer(central.SigPublicKey());
-	central.SetPeer(end.SigPublicKey());
+	KeyGenerator keygen(bfv.context);
+	EvalKeys eval_keys;
+	const Provisioning pv = Provision(bfv, keygen, eval_keys);
+	const zk::AdscSetup adsc_p(Zone::Passenger, zk::Encoding::Flags), adsc_d(Zone::Driver, zk::Encoding::Flags),
+		adsc_i(Zone::Ign, zk::Encoding::Flags);
+	PassengerNode passenger(rec, bfv, pv, adsc_p);
+	DriverNode driver(rec, bfv, pv, adsc_d);
+	IgnNode ign(rec, bfv, pv, adsc_i);
+	CentralNode central(rec, bfv, std::move(eval_keys), adsc_p, adsc_d, adsc_i);
+	passenger.SetPeer(central.SigPublicKey());
+	central.SetPeer(Zone::Passenger, passenger.SigPublicKey());
+	central.SetPeer(Zone::Driver, driver.SigPublicKey());
+	central.SetPeer(Zone::Ign, ign.SigPublicKey());
 
-	// sensors: thresholds in [2^31, 2^32); every third round one reading exceeds its threshold
-	std::mt19937_64 sensors(2024);
-	UplinkMsg up;
+	// the measured rounds start with the scenario's cases; the warm-up has its own generator
+	window::Rounds warmup_rounds(7), rounds;
+	UplinkMsg up_p, up_d, up_i;
 	DownlinkMsg dl;
 	const int total = opts.warmup + opts.rounds;
 	for (int r = 0; r < total; ++r) {
-		std::vector<uint32_t> readings(kSensors), thresholds(kSensors);
-		for (int i = 0; i < kSensors; ++i) {
-			thresholds[i] = (uint32_t)(0x80000000ULL + sensors() % 0x80000000ULL);
-			readings[i] = (uint32_t)(sensors() % thresholds[i]);
-		}
-		if (r % 3 == 2) {
-			const int k = (int)(sensors() % kSensors);
-			readings[k] = (uint32_t)(thresholds[k] + sensors() % (0x100000000ULL - thresholds[k]));
-		}
-		uint64_t oracle = 1;
-		for (int i = 0; i < kSensors; ++i) oracle &= readings[i] < thresholds[i];
+		const window::Inputs in = r < opts.warmup ? warmup_rounds.Next() : rounds.Next();
+		const window::Cmd expect = window::Decide(in);
 
 		rec.BeginRound();
-		up = end.Send(r, readings, thresholds);
-		dl = central.Process(up, thresholds);  // the central node's policy, not the uplink's
-		const RoundOutcome got = end.Receive(dl);
-		const bool ok = central.accepted() && got.sig_ok && got.mac_ok && got.decision == oracle;
+		up_p = passenger.Send(r, in);
+		up_d = driver.Send(r, in);
+		up_i = ign.Send(r, in);
+		central.Receive(Zone::Passenger, up_p);
+		central.Receive(Zone::Driver, up_d);
+		central.Receive(Zone::Ign, up_i);
+		dl = central.Respond();
+		const RoundOutcome got = passenger.Receive(r, dl);
+		const bool ok = central.accepted() && got.sig_ok && got.mac_ok && got.valid && got.cmd == expect;
 		rec.RoundResult(ok);
 		if (!opts.quiet)
-			std::printf("round %d%s: decision %llu (oracle %llu), uplink %s, downlink sig %s, MAC %s -> %s\n", r,
-					r < opts.warmup ? " (warm-up)" : "", (unsigned long long)got.decision,
-					(unsigned long long)oracle, central.accepted() ? "accepted" : "REJECTED",
-					got.sig_ok ? "ok" : "BAD", got.mac_ok ? "ok" : "BAD", ok ? "correct" : "WRONG");
+			std::printf("round %d%s %-30s command %-6s (expected %-6s), uplinks %s, downlink sig %s, MAC %s -> %s\n", r,
+					r < opts.warmup ? " (warm-up)" : "", in.label.c_str(),
+					got.valid ? window::CmdName(got.cmd) : "INVALID", window::CmdName(expect),
+					central.accepted() ? "accepted" : "REJECTED", got.sig_ok ? "ok" : "BAD", got.mac_ok ? "ok" : "BAD",
+					ok ? "correct" : "WRONG");
 	}
 
+	const long rounds_run = std::max(total, 1);
 	rec.Param("N", (double)bfv.N);
 	rec.Param("plaintext_bits", (double)cfg.pbits);
 	rec.Param("t", (double)bfv.t);
@@ -590,25 +777,33 @@ int main(int argc, char** argv) {
 	rec.Param("downlink_primes", (double)bfv.rprimes);
 	rec.Param("limb_bits", cfg.limb_bits > 0 ? std::to_string(cfg.limb_bits) : std::string("BFVDefault"));
 	rec.Param("kmac", (double)bfv.kmac);
-	rec.Param("sensors", (double)kSensors);
-	rec.Param("uplink_values", (double)bfv.nvals);
+	rec.Param("uplink_values_passenger", (double)bfv.Values(Zone::Passenger));
+	rec.Param("uplink_values_driver", (double)bfv.Values(Zone::Driver));
+	rec.Param("uplink_values_ign", (double)bfv.Values(Zone::Ign));
+	rec.Param("circuit", "CmdArith on degree-1 tags: depth 3, 8 tag products, degree " + std::to_string(kTagDegree) +
+			", " + std::to_string(central.arith().mults() / rounds_run) + " ciphertext products + " +
+			std::to_string(central.arith().relins() / rounds_run) + " relinearizations per round");
 	rec.Param("signature", "Ed25519");
 	rec.Param("backend", IPCEI_BACKEND);
-	rec.Param("adsc_circuit", "PID + " + std::to_string(kSensors) + " x " + std::to_string(kReadingBits) +
-			"-bit comparisons");
-	rec.Param("adsc_constraints", (double)adsc_setup.constraints());
-	rec.Param("downlink_noise_budget_bits", (double)end.noise_bits());
-	rec.Size("uplink (FHE payload)", (double)up.payload_bytes);
-	rec.Size("uplink signed message", (double)up.bytes.size());
+	rec.Param("adsc_constraints_passenger", (double)adsc_p.constraints());
+	rec.Param("adsc_constraints_driver", (double)adsc_d.constraints());
+	rec.Param("adsc_constraints_ign", (double)adsc_i.constraints());
+	rec.Param("downlink_noise_budget_bits", (double)passenger.noise_bits());
+	rec.Size("uplink passenger (FHE payload)", (double)up_p.payload_bytes);
+	rec.Size("uplink driver (FHE payload)", (double)up_d.payload_bytes);
+	rec.Size("uplink ign (FHE payload)", (double)up_i.payload_bytes);
 	rec.Size("downlink (FHE payload)", (double)(dl.bytes.size() - 4));
-	rec.Size("ADSC proof + commitment", (double)up.adsc.proof_bytes);
+	rec.Size("ADSC proof passenger", (double)up_p.adsc.proof_bytes);
+	rec.Size("ADSC proof driver", (double)up_d.adsc.proof_bytes);
+	rec.Size("ADSC proof ign", (double)up_i.adsc.proof_bytes);
 	rec.Size("signature (each link)", (double)ipcei::Ed25519::kSignatureBytes);
+	rec.Note("the end zones share the BFV secret key and the MAC key (alpha, PRF key): trusted, provisioned into "
+			"their HSEs; only the central node is blind");
 	rec.Note("encode is fused into encrypt: each value is scaled by floor(q'/t) inside the seeded-LWE encryption");
-	rec.Note("the uplink signature covers round, PID outputs and the FHE payload; the ADSC proof is bound by its "
-			"chained state commitment");
-	rec.Note("the ADSC proof shows the flags are honest comparisons of authenticated readings, but does not tie them "
-			"to the uplink ciphertexts");
-	rec.Note("seeded 'a' vectors are expanded with mt19937_64 (benchmark PRNG, not a XOF)");
+	rec.Note("the ADSC proofs show each zone's bits are derived from its authenticated sensor data, but do not bind "
+			"them to the uplink ciphertexts");
+	rec.Note("seeded 'a' vectors are expanded with mt19937_64 and the MAC secrets r = PRF(key, round, point, zone, "
+			"index) use a SplitMix64 mix (benchmark PRNG / PRF, not a XOF / cryptographic PRF)");
 
 	ipcei::Report report(rec, "bfv_seal", "SEAL " SEAL_VERSION, "BFV");
 	report.Print();
