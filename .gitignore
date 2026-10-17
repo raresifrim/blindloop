@@ -1,0 +1,25 @@
+# ---- OS / editor cruft ----
+.DS_Store
+*.swp
+
+# ---- Claude Code local (machine-specific) ----
+.claude/settings.local.json
+
+# ---- Third-party libraries cloned + built by benches/common/build_*.sh ----
+deps/
+
+# ---- Build output ----
+build/
+build-*/
+third_party/adsc-snark/build/
+*.o
+*.a
+*.so
+*.dylib
+
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- run.sh output (machine-specific; send it, don't commit it) ----
+results/

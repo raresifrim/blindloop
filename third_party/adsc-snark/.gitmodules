@@ -1,0 +1,19 @@
+[submodule "depends/libsnark"]
+	path = depends/libsnark
+	url = ../libsnark.git
+	branch = adscsnark
+[submodule "depends/libfqfft"]
+	path = depends/libfqfft
+	url = ../libfqfft.git
+	branch = acdev
+[submodule "depends/libff"]
+	path = depends/libff
+	url = ../libff.git
+	branch = acdev
+[submodule "depends/ethsnarks"]
+	path = depends/ethsnarks
+	url = ../ethsnarks.git
+	branch = acdev
+[submodule "depends/libsnark-supercop"]
+	path = depends/libsnark-supercop
+	url = https://github.com/mbbarbosa/libsnark-supercop.git
