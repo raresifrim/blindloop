@@ -7,6 +7,8 @@
 #   ipcei_zk          the end zones' ADSC-SNARKs + BN254 Schnorr, on the vendored
 #                     third_party/adsc-snark (curve BN254)
 #   ipcei_sig         Ed25519 uplink / downlink signatures (OpenSSL)
+#   ipcei_net         emulated Ethernet: lwIP (vendored third_party/lwip) for the end
+#                     zones, the OS's TCP stack for the central node
 #   zk_selftest       checks every zone's proof and both signatures; times them
 #   bfv_seal, bfv_openfhe, tfhe_openfhe[_n32]   the protocol benches (window-lift scenario)
 #   ntt_seal, ntt_openfhe, tfhe_lut_openfhe     microbenches
@@ -60,6 +62,26 @@ add_library(ipcei_sig STATIC benches/common/ipcei/sig.cpp)
 set_target_properties(ipcei_sig PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_include_directories(ipcei_sig PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benches/common)
 target_link_libraries(ipcei_sig PUBLIC OpenSSL::Crypto)
+
+# The emulated Ethernet (net.hpp): lwIP for the end zones (vendored, third_party/lwip,
+# configured by benches/common/ipcei/lwip_port), the OS's TCP stack for the central node.
+set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lwip/src)
+add_library(ipcei_lwip STATIC
+  ${LWIP_DIR}/core/def.c ${LWIP_DIR}/core/inet_chksum.c ${LWIP_DIR}/core/init.c ${LWIP_DIR}/core/ip.c
+  ${LWIP_DIR}/core/mem.c ${LWIP_DIR}/core/memp.c ${LWIP_DIR}/core/netif.c ${LWIP_DIR}/core/pbuf.c
+  ${LWIP_DIR}/core/raw.c ${LWIP_DIR}/core/stats.c ${LWIP_DIR}/core/sys.c ${LWIP_DIR}/core/tcp.c
+  ${LWIP_DIR}/core/tcp_in.c ${LWIP_DIR}/core/tcp_out.c ${LWIP_DIR}/core/timeouts.c ${LWIP_DIR}/core/udp.c
+  ${LWIP_DIR}/core/ipv4/etharp.c ${LWIP_DIR}/core/ipv4/icmp.c ${LWIP_DIR}/core/ipv4/ip4.c
+  ${LWIP_DIR}/core/ipv4/ip4_addr.c ${LWIP_DIR}/core/ipv4/ip4_frag.c ${LWIP_DIR}/netif/ethernet.c)
+target_include_directories(ipcei_lwip PUBLIC ${LWIP_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/benches/common/ipcei/lwip_port)
+target_compile_options(ipcei_lwip PRIVATE -O3 ${NATIVE_FLAG} -w)
+
+add_library(ipcei_net STATIC benches/common/ipcei/net.cpp)
+set_target_properties(ipcei_net PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_compile_options(ipcei_net PRIVATE -O3 ${NATIVE_FLAG})
+target_include_directories(ipcei_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/benches/common)
+target_link_libraries(ipcei_net PUBLIC ipcei_lwip)
 
 add_executable(zk_selftest benches/common/zk_selftest.cpp)
 set_target_properties(zk_selftest PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
@@ -144,7 +166,7 @@ function(ipcei_bench tgt src)
   add_executable(${tgt} ${src})
   set_target_properties(${tgt} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
   target_compile_definitions(${tgt} PRIVATE IPCEI_BACKEND="${IPCEI_BACKEND}")
-  target_link_libraries(${tgt} PRIVATE ipcei_zk ipcei_sig Threads::Threads)
+  target_link_libraries(${tgt} PRIVATE ipcei_zk ipcei_sig ipcei_net Threads::Threads)
 endfunction()
 
 # ---------------------------------------------------------------- protocol benches

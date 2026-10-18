@@ -48,6 +48,13 @@ Every protocol bench also runs these, for real, in every round:
   - **Freshness:** the chained state is a round counter, so a proof is valid only in its own round.
 - **Signatures:** Ed25519 (OpenSSL) on every link. This was measured about 7× faster than a BN254 Schnorr signature.
 
+- **Emulated Ethernet:** every uplink and the downlink cross a real TCP connection ([`net.hpp`](benches/common/ipcei/net.hpp)), and each node pays the CPU cost of the stack it would run in the vehicle:
+  - **End zones (MCU class, RTOS):** the vendored [lwIP 2.2.1](third_party/lwip/VENDORED.md), without an OS (`NO_SYS`, raw TCP API). An in-memory interface replaces the MAC driver, copying each frame into a shared-memory ring. Steps `send_uplink` and `recv_downlink` count only the time spent in lwIP. TCP/IP checksums are computed in software; `--eth-offload` hands them to the MAC.
+  - **Central compute (Linux):** the OS TCP stack over loopback, with MSS 1460 as on a 1500-byte MTU link. Steps `recv_uplink` and `send_downlink` count the thread's CPU time in the socket calls.
+  - **The other end of each connection** is an untimed peer process.
+  - **Wire time:** not emulated but modelled per message, for 100BASE-T1 and 1000BASE-T1. The model counts TCP/IPv4/Ethernet framing and one store-and-forward switch hop, and is reported in a separate links table.
+  - `--no-net` turns the transfers off; the wire model is still reported.
+
 The ZK code is the vendored [`third_party/adsc-snark`](third_party/adsc-snark/VENDORED.md). It always uses BN254, portable field arithmetic and a single thread, so ZK timings stay comparable across machines.
 
 Microbenches: `ntt_seal` and `ntt_openfhe` (forward/inverse NTT per size and prime width), `tfhe_lut_openfhe` (LUT vs gate evaluation), and `zk_selftest` (checks every zone's proof in both encodings and both signature schemes, checks that replays and tampering are rejected, and times each operation).

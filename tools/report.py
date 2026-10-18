@@ -105,6 +105,15 @@ def bench_table(name, backends, data):
     if base.get("sizes_bytes"):
         lines.append("")
         lines.append("Sizes: " + ", ".join(f"{k} {v:,.0f} B" for k, v in base["sizes_bytes"].items()) + ".")
+    if base.get("links"):
+        lines.append("")
+        lines.append("Links (TCP/IPv4 over switched Ethernet, modelled wire time, one switch hop):")
+        lines.append("")
+        lines.append("| link | message (B) | frames | on wire (B) | 100BASE-T1 (ms) | 1000BASE-T1 (ms) |")
+        lines.append("|---|---|---|---|---|---|")
+        for k, l in base["links"].items():
+            lines.append(f"| {k} | {l['bytes']:,} | {l['frames']} | {l['wire_bytes']:,} | "
+                         f"{ms(l['ms_100base_t1'])} | {ms(l['ms_1000base_t1'])} |")
     notes = base.get("notes") or []
     if notes:
         lines.append("")

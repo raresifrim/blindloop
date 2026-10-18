@@ -59,6 +59,7 @@
 #include "binfhe/binfhecontext.h"
 
 #include "ipcei/harness.hpp"
+#include "ipcei/net.hpp"
 #include "comparator.hpp"
 #include "ipcei/scenario.hpp"
 #include "ipcei/sig.hpp"
@@ -394,6 +395,7 @@ int main(int argc, char** argv) {
 	// down: n32 flags evaluate 72 ms single-threaded vs 115 ms on the 18 cores of an M5 Pro)
 	ipcei::SingleThreadByDefault(argv);
 	const ipcei::Options opts = ipcei::Options::Parse(argc, argv, window::Rounds::kCases);
+	ipcei::net::Network net(opts);  // first: it forks its peer processes
 	Config cfg;
 	std::string paramset = "STD128";
 	unsigned seed = 12345;
@@ -465,6 +467,7 @@ int main(int argc, char** argv) {
 	rec.Param("threads", std::to_string(omp_get_max_threads()));
 	for (int z = 0; z < 3; ++z)
 		rec.Param(std::string("adsc_constraints_") + ZoneName(ipcei::kEndZones[z]), (double)setups[z]->constraints());
+	net.Describe(rec);
 	rec.Note("TFHE encrypts each bit directly: no separate encode step");
 	rec.Note("no MAC in TFHE: no result check after decryption");
 	rec.Note("the ADSC proofs show each zone's bits are derived from authenticated sensor data, "
@@ -489,12 +492,15 @@ int main(int argc, char** argv) {
 			up[z] = zones[z]->MakeUplink(r, in, bits_ok);
 			ok = ok && bits_ok;
 		}
+		for (int z = 0; z < 3; ++z)
+			ok = net.Uplink(rec, ipcei::kEndZones[z], up[z].wire, up[z].signature, up[z].adsc.proof_bytes) && ok;
 		for (int z = 0; z < 3; ++z) ok = central.Receive(up[z], r) && ok;  // every uplink is checked
 		int motor[2] = {0, 0};
 		Downlink dn;
 		if (ok) {
 			central.Evaluate(r, dn);
-			ok = passenger.ReadDownlink(dn, r, central.PublicKey(), motor);
+			ok = net.Downlink(rec, dn.wire, dn.signature);
+			ok = ok && passenger.ReadDownlink(dn, r, central.PublicKey(), motor);
 		}
 		const bool valid = !(motor[0] && motor[1]);  // never both directions
 		const window::Cmd got = DecodeCmd(motor);

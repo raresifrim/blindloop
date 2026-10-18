@@ -9,11 +9,17 @@
 //
 //   uplink    each end zone (passenger, driver, ign) encodes, encrypts and compresses its
 //             signals, authenticates its sensor data and proves its inputs in an
-//             ADSC-SNARK, and signs its uplink
-//   central   the Process APP verifies every uplink signature and proof, decompresses,
-//             evaluates the motor command blind, compresses and signs the downlink
-//   downlink  the passenger zone (the actuator) verifies the downlink signature,
-//             decrypts and checks the result
+//             ADSC-SNARK, signs its uplink and sends it
+//   central   the Process APP receives every uplink, verifies its signature and proof,
+//             decompresses, evaluates the motor command blind, compresses, signs and
+//             sends the downlink
+//   downlink  the passenger zone (the actuator) receives the downlink, verifies its
+//             signature, decrypts and checks the result
+//
+// The transfers run over emulated automotive Ethernet (net.hpp): the end zones through
+// lwIP (an MCU-class stack), the central node through the OS's TCP stack. Their CPU
+// cost is a step of each node; the time on the wire is modelled per link (EthernetWire)
+// and reported separately, at 100BASE-T1 and 1000BASE-T1.
 //
 // A bench implements one Participant per zone (PassengerNode, DriverNode, IgnNode,
 // CentralNode) whose methods wrap each step in timed("<step id>", ...); the zone comes
@@ -81,13 +87,17 @@ inline const std::vector<StepDef>& Steps() {
 			s.push_back({"adsc_authenticate", z, Phase::Uplink, "sensor data authenticate (ADSC)"});
 			s.push_back({"adsc_prove", z, Phase::Uplink, "ADSC-SNARK proof of the inputs"});
 			s.push_back({"sign_uplink", z, Phase::Uplink, "uplink sign"});
+			s.push_back({"send_uplink", z, Phase::Uplink, "uplink send (lwIP, Ethernet)"});
 		}
+		s.push_back({"recv_uplink", Zone::Central, Phase::Central, "uplinks receive (3, OS TCP)"});
 		s.push_back({"verify_uplink", Zone::Central, Phase::Central, "uplink signatures verify (3)"});
 		s.push_back({"adsc_verify", Zone::Central, Phase::Central, "ADSC-SNARK verify (3)"});
 		s.push_back({"decompress", Zone::Central, Phase::Central, "uplinks decompress (3)"});
 		s.push_back({"evaluate", Zone::Central, Phase::Central, "FHE evaluate (motor command)"});
 		s.push_back({"compress_downlink", Zone::Central, Phase::Central, "downlink compress"});
 		s.push_back({"sign_downlink", Zone::Central, Phase::Central, "downlink sign"});
+		s.push_back({"send_downlink", Zone::Central, Phase::Central, "downlink send (OS TCP)"});
+		s.push_back({"recv_downlink", Zone::Passenger, Phase::Downlink, "downlink receive (lwIP, Ethernet)"});
 		s.push_back({"verify_downlink", Zone::Passenger, Phase::Downlink, "downlink signature verify"});
 		s.push_back({"decrypt", Zone::Passenger, Phase::Downlink, "FHE decrypt"});
 		s.push_back({"check_result", Zone::Passenger, Phase::Downlink, "result check (MAC tag)"});
@@ -108,6 +118,34 @@ inline const StepDef* FindStep(const std::string& key) {
 }
 
 using Clock = std::chrono::steady_clock;
+
+/// One message on a switched automotive Ethernet link: TCP over IPv4 (no options, MSS
+/// 1460 for the 1500-byte MTU), each segment in its own frame (14-byte header, 4-byte FCS,
+/// 64-byte minimum) plus preamble and inter-frame gap (20 bytes). The latency at a link
+/// rate is the serialization of every frame plus one switch hop (store-and-forward of the
+/// last frame). Not modelled: the reverse-direction ACKs (full duplex), TCP slow start,
+/// queueing behind other traffic, propagation delay (ns over in-vehicle distances).
+struct WireStats {
+	size_t bytes = 0, frames = 0, wire_bytes = 0;
+	double ms_100m = 0, ms_1g = 0;
+};
+
+inline WireStats EthernetWire(size_t bytes) {
+	constexpr size_t kMss = 1460, kTcpIp = 40, kEth = 18, kMinFrame = 64, kPhy = 20;
+	WireStats w;
+	w.bytes = bytes;
+	w.frames = bytes == 0 ? 1 : (bytes + kMss - 1) / kMss;
+	size_t last = 0;
+	for (size_t f = 0; f < w.frames; ++f) {
+		const size_t seg = std::min(kMss, bytes - std::min(bytes, f * kMss));
+		last = std::max(kMinFrame, kEth + kTcpIp + seg);
+		w.wire_bytes += last + kPhy;
+	}
+	auto ms = [&](double bps) { return (8.0 * w.wire_bytes + 8.0 * last) / bps * 1e3; };
+	w.ms_100m = ms(100e6);
+	w.ms_1g = ms(1e9);
+	return w;
+}
 
 inline double MsSince(Clock::time_point t0) {
 	return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
@@ -134,6 +172,16 @@ public:
 	void Param(const std::string& k, const std::string& v) { params_.emplace_back(k, v); }
 	void Param(const std::string& k, double v) { params_.emplace_back(k, Num(v)); }
 	void Size(const std::string& k, double bytes) { sizes_.emplace_back(k, bytes); }
+	/// A message crossing a link (whole message: header, payload, signature, proof); the
+	/// last round's size is kept (the sizes do not change between rounds).
+	void Link(const std::string& name, size_t bytes) {
+		for (auto& l : links_)
+			if (l.first == name) {
+				l.second = bytes;
+				return;
+			}
+		links_.emplace_back(name, bytes);
+	}
 	void Note(const std::string& n) { notes_.push_back(n); }
 
 	int warmup() const { return warmup_; }
@@ -141,6 +189,7 @@ public:
 	const std::vector<bool>& correct() const { return correct_; }
 	const std::vector<std::pair<std::string, std::string>>& params() const { return params_; }
 	const std::vector<std::pair<std::string, double>>& sizes() const { return sizes_; }
+	const std::vector<std::pair<std::string, size_t>>& links() const { return links_; }
 	const std::vector<std::string>& notes() const { return notes_; }
 
 	static std::string Num(double v) {
@@ -156,6 +205,7 @@ private:
 	std::vector<bool> correct_;
 	std::vector<std::pair<std::string, std::string>> params_;
 	std::vector<std::pair<std::string, double>> sizes_;
+	std::vector<std::pair<std::string, size_t>> links_;
 	std::vector<std::string> notes_;
 };
 
@@ -237,6 +287,15 @@ public:
 			std::fprintf(out, "\n");
 			for (const auto& s : rec_.sizes()) std::fprintf(out, "  %-40s %12.0f B\n", s.first.c_str(), s.second);
 		}
+		if (!rec_.links().empty()) {
+			std::fprintf(out, "\n  %-24s %10s %7s %11s %13s %13s\n", "link (TCP/IPv4/Ethernet)", "message B",
+					"frames", "on wire B", "100BASE-T1 ms", "1000BASE-T1 ms");
+			for (const auto& l : rec_.links()) {
+				const WireStats w = EthernetWire(l.second);
+				std::fprintf(out, "  %-24s %10zu %7zu %11zu %13.3f %13.3f\n", l.first.c_str(), w.bytes, w.frames,
+						w.wire_bytes, w.ms_100m, w.ms_1g);
+			}
+		}
 		for (const auto& n : rec_.notes()) std::fprintf(out, "  note: %s\n", n.c_str());
 	}
 
@@ -283,6 +342,13 @@ public:
 		  << ", \"sequential\": " << stats(TotalStats(Total::Sequential)) << "},\n  \"sizes_bytes\": {";
 		for (size_t i = 0; i < rec_.sizes().size(); ++i)
 			f << (i ? ", " : "") << q(rec_.sizes()[i].first) << ": " << Recorder::Num(rec_.sizes()[i].second);
+		f << "},\n  \"links\": {";
+		for (size_t i = 0; i < rec_.links().size(); ++i) {
+			const WireStats w = EthernetWire(rec_.links()[i].second);
+			f << (i ? ", " : "") << q(rec_.links()[i].first) << ": {\"bytes\": " << w.bytes << ", \"frames\": "
+			  << w.frames << ", \"wire_bytes\": " << w.wire_bytes << ", \"ms_100base_t1\": " << Recorder::Num(w.ms_100m)
+			  << ", \"ms_1000base_t1\": " << Recorder::Num(w.ms_1g) << "}";
+		}
 		f << "},\n  \"notes\": [";
 		for (size_t i = 0; i < rec_.notes().size(); ++i) f << (i ? ", " : "") << q(rec_.notes()[i]);
 		f << "]\n}\n";
@@ -349,13 +415,16 @@ inline void SingleThreadByDefault(char** argv) {
 	std::fprintf(stderr, "harness: could not re-execute %s with OMP_NUM_THREADS=1\n", argv[0]);
 }
 
-/// Common command-line options: --rounds R --warmup W --json FILE --quiet.
-/// Leaves every other argument in `rest` for the bench to parse.
+/// Common command-line options: --rounds R --warmup W --json FILE --quiet, and for the
+/// emulated Ethernet (net.hpp) --no-net (no transfers) and --eth-offload (the end zones'
+/// MAC computes the TCP/IP checksums). Leaves every other argument in `rest`.
 struct Options {
 	int rounds = 5;
 	int warmup = 1;
 	std::string json;
 	bool quiet = false;
+	bool net = true;
+	bool eth_offload = false;
 	std::vector<std::string> rest;
 
 	static Options Parse(int argc, char** argv, int default_rounds = 5) {
@@ -374,6 +443,8 @@ struct Options {
 			else if (a == "--warmup") o.warmup = std::atoi(next().c_str());
 			else if (a == "--json") o.json = next();
 			else if (a == "--quiet") o.quiet = true;
+		else if (a == "--no-net") o.net = false;
+		else if (a == "--eth-offload") o.eth_offload = true;
 			else o.rest.push_back(a);
 		}
 		return o;

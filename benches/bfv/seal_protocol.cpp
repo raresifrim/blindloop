@@ -84,6 +84,7 @@
 #include <vector>
 
 #include "ipcei/harness.hpp"
+#include "ipcei/net.hpp"
 #include "ipcei/scenario.hpp"
 #include "ipcei/sig.hpp"
 #include "ipcei/zk.hpp"
@@ -720,6 +721,7 @@ Config ParseConfig(const std::vector<std::string>& args) {
 
 int main(int argc, char** argv) {
 	const ipcei::Options opts = ipcei::Options::Parse(argc, argv, window::Rounds::kCases);
+	ipcei::net::Network net(opts);  // first: it forks its peer processes
 	const Config cfg = ParseConfig(opts.rest);
 	ipcei::Recorder rec(opts.warmup);
 
@@ -753,12 +755,16 @@ int main(int argc, char** argv) {
 		up_p = passenger.Send(r, in);
 		up_d = driver.Send(r, in);
 		up_i = ign.Send(r, in);
+		bool delivered = net.Uplink(rec, Zone::Passenger, up_p.bytes, up_p.sig, up_p.adsc.proof_bytes);
+		delivered = net.Uplink(rec, Zone::Driver, up_d.bytes, up_d.sig, up_d.adsc.proof_bytes) && delivered;
+		delivered = net.Uplink(rec, Zone::Ign, up_i.bytes, up_i.sig, up_i.adsc.proof_bytes) && delivered;
 		central.Receive(Zone::Passenger, up_p);
 		central.Receive(Zone::Driver, up_d);
 		central.Receive(Zone::Ign, up_i);
 		dl = central.Respond();
+		delivered = net.Downlink(rec, dl.bytes, dl.sig) && delivered;
 		const RoundOutcome got = passenger.Receive(r, dl);
-		const bool ok = central.accepted() && got.sig_ok && got.mac_ok && got.valid && got.cmd == expect;
+		const bool ok = delivered && central.accepted() && got.sig_ok && got.mac_ok && got.valid && got.cmd == expect;
 		rec.RoundResult(ok);
 		if (!opts.quiet)
 			std::printf("round %d%s %-30s command %-6s (expected %-6s), uplinks %s, downlink sig %s, MAC %s -> %s\n", r,
@@ -785,6 +791,7 @@ int main(int argc, char** argv) {
 			std::to_string(central.arith().relins() / rounds_run) + " relinearizations per round");
 	rec.Param("signature", "Ed25519");
 	rec.Param("backend", IPCEI_BACKEND);
+	net.Describe(rec);
 	rec.Param("adsc_constraints_passenger", (double)adsc_p.constraints());
 	rec.Param("adsc_constraints_driver", (double)adsc_d.constraints());
 	rec.Param("adsc_constraints_ign", (double)adsc_i.constraints());

@@ -114,6 +114,7 @@
 #include "scheme/bfvrns/bfvrns-ser.h"
 
 #include "ipcei/harness.hpp"
+#include "ipcei/net.hpp"
 #include "ipcei/scenario.hpp"
 #include "ipcei/sig.hpp"
 #include "ipcei/zk.hpp"
@@ -1026,6 +1027,7 @@ int main(int argc, char** argv) {
 	// one thread unless OMP_NUM_THREADS says otherwise (the suite measures single-core nodes)
 	ipcei::SingleThreadByDefault(argv);
 	ipcei::Options opts = ipcei::Options::Parse(argc, argv, window::Rounds::kCases);
+	ipcei::net::Network net(opts);  // first: it forks its peer processes
 	Config cfg;
 	for (size_t i = 0; i < opts.rest.size(); ++i) {
 		const std::string& a = opts.rest[i];
@@ -1158,15 +1160,17 @@ int main(int argc, char** argv) {
 		rec.BeginRound();
 		bool verified = true;
 		for (EndZoneNode* z : zones) {
-			const Uplink up = z->MakeUplink(round, in);
+			Uplink up = z->MakeUplink(round, in);
+			verified = net.Uplink(rec, z->zone(), up.wire, up.signature, up.adsc.proof_bytes) && verified;
 			verified = central.Receive(round, z->zone(), up) && verified;
 			up_bytes[z->zone()] = up.wire.size() - kUplinkHeader;
 			adsc_bytes[z->zone()] = up.adsc.proof_bytes;
 			sig_bytes = up.signature.size();
 		}
-		const Downlink dl = central.Process(round);
+		Downlink dl = central.Process(round);
+		const bool delivered = net.Downlink(rec, dl.wire, dl.signature);
 		const Outcome o = passenger.ReadDownlink(round, dl, central.SigningKey());
-		const bool ok = verified && o.sig_ok && o.mac_ok && o.cmd == expected;
+		const bool ok = verified && delivered && o.sig_ok && o.mac_ok && o.cmd == expected;
 		rec.RoundResult(ok);
 		dl_bytes = dl.wire.size() - kDownlinkHeader;
 		++commands[(int)expected];
@@ -1185,6 +1189,7 @@ int main(int argc, char** argv) {
 	}
 
 	rec.Param("backend", IPCEI_BACKEND);
+	net.Describe(rec);
 	rec.Param("threads", std::to_string(omp_get_max_threads()));
 	rec.Param("ring dimension N", N);
 	rec.Param("log2 Q", logQ);
