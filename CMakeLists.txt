@@ -74,6 +74,7 @@ set(SEAL_ROOT ${DEPS}/stock/seal CACHE PATH "SEAL install prefix (lib/libseal-4.
 set(SEAL_HEXL_LIB "" CACHE FILEPATH "HEXL library SEAL was built against (empty: none, or SEAL_ROOT/lib/libhexl.a)")
 set(OPENFHE_ROOT ${DEPS}/stock/openfhe-n64 CACHE PATH "OpenFHE install prefix, NATIVE_SIZE=64")
 set(OPENFHE_N32_ROOT "" CACHE PATH "OpenFHE install prefix, NATIVE_SIZE=32 (optional)")
+set(HEXL_ROOT "" CACHE PATH "HEXL install prefix whose headers OpenFHE's HEXL HAL includes, when not installed with OpenFHE (rvv-hexl)")
 
 add_compile_options(-O3 ${NATIVE_FLAG})
 find_package(Threads REQUIRED)
@@ -106,6 +107,9 @@ function(ipcei_openfhe tgt root)
   foreach(s ${OPENFHE_INC_SUFFIXES})
     list(APPEND incs "${root}/include/${s}")
   endforeach()
+  if(NOT HEXL_ROOT STREQUAL "")
+    list(APPEND incs "${HEXL_ROOT}/include")
+  endif()
   target_include_directories(${tgt} PRIVATE ${incs})
   target_link_libraries(${tgt} PRIVATE ${${tgt}_PKE} ${${tgt}_BINFHE} ${${tgt}_CORE})
   file(GLOB hexl "${root}/lib/libhexl*" "${root}/lib64/libhexl*")   # Intel HEXL installed with OpenFHE

@@ -113,6 +113,7 @@ backend_paths() {
 	local d="$REPO/deps/$1$DEPS_SUFFIX"
 	SEAL_HEXL_LIB=""
 	OPENFHE_N32_ROOT=""
+	HEXL_ROOT=""
 	case "$1" in
 		stock)
 			SEAL_ROOT="$d/seal"
@@ -128,6 +129,7 @@ backend_paths() {
 			local r="$RVV_HEXL_DIR/build"
 			SEAL_ROOT="$r/seal/$RVV_ISA/rvvhexl/install"
 			SEAL_HEXL_LIB="$r/$RVV_ISA-release/install/lib/libhexl.a"
+			HEXL_ROOT="$r/$RVV_ISA-release/install"
 			OPENFHE_ROOT="$r/openfhe/$RVV_ISA/n64-rvvhexl/install"
 			[ "$WITH_N32" = "1" ] && OPENFHE_N32_ROOT="$r/openfhe/$RVV_ISA/n32-rvvhexl/install"
 			local rev
@@ -190,6 +192,7 @@ build_benches() {
 		-DSEAL_HEXL_LIB="$SEAL_HEXL_LIB" \
 		-DOPENFHE_ROOT="$OPENFHE_ROOT" \
 		-DOPENFHE_N32_ROOT="$OPENFHE_N32_ROOT" \
+		-DHEXL_ROOT="$HEXL_ROOT" \
 		"${mac[@]}"
 	run_logged "$dir/build.log" "benches ($b) build" cmake --build "$dir" -j "$NPROC"
 	{
