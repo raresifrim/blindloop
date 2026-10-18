@@ -122,9 +122,11 @@ function(ipcei_openfhe tgt root)
   endif()
   set_target_properties(${tgt} PROPERTIES BUILD_RPATH "${root}/lib;${root}/lib64")
   if(NOT APPLE)
-    # DT_RPATH, not RUNPATH: libOPENFHEpke.so needs libOPENFHEbinfhe.so itself, and the
-    # loader searches an executable's RUNPATH only for its own direct dependencies
-    target_link_options(${tgt} PRIVATE "LINKER:--disable-new-dtags")
+    # libOPENFHEpke.so needs libOPENFHEbinfhe.so itself. The loader searches an executable's
+    # RUNPATH only for its own direct dependencies, and ignores even its DT_RPATH for a
+    # library that has a RUNPATH of its own (rvv-hexl's OpenFHE builds do): DT_RPATH, and
+    # every OpenFHE library a direct dependency of the bench.
+    target_link_options(${tgt} PRIVATE "LINKER:--disable-new-dtags" "LINKER:--no-as-needed")
   endif()
   # the installed package records the version (OpenFHE's version.h needs a define
   # that only exists while OpenFHE itself is built)
