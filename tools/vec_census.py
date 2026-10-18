@@ -7,7 +7,7 @@
 
 Disassembles each file (objdump -d) and reports, for AArch64 (NEON) or riscv64 (RVV):
 all vector instructions, the arithmetic ones among them (no loads, stores, moves,
-permutes or vsetvli), and the widening multiplies (umull/umull2, vwmulu). Used to check
+permutes, vsetvli or mask operations), and the widening multiplies (umull/umull2, vwmulu). Used to check
 an OPENFHE_N32_NOVEC=1 build: its arithmetic count must fall to (nearly) zero next to
 the vectorised library, otherwise the compiler ignored the flags.
 """
@@ -20,8 +20,11 @@ NEON_NOT_ARITH = re.compile(
     r"^(ld[1-4]r?|st[1-4]|ldr|str|ldp|stp|ldur|stur|mov|movi|mvni|dup|ins|umov|smov|ext|"
     r"zip[12]|uzp[12]|trn[12]|tbl|tbx|rev\d*|fmov)$")
 NEON_WMUL = re.compile(r"^umull2?$")
+# loads/stores, moves, permutes, vsetvli, and the mask ops of inlined string functions
+# (vmseq/vfirst/vcpop/vmor...): none of them computes
 RVV_NOT_ARITH = re.compile(
-    r"^(vset\w*|vl\w*|vs(e|se|ux|ox|\d)\w*|vmv\w*|vfmv\w*|vslide\w*|vrgather\w*|vcompress\w*|vid\.v)$")
+    r"^(vset[\w.]*|vl[\w.]*|vs(e|se|ux|ox|\d)[\w.]*|vmv[\w.]*|vfmv[\w.]*|vslide[\w.]*|vrgather[\w.]*|"
+    r"vcompress[\w.]*|vid\.v|vms[a-z]*\.[\w.]*|vm[a-z]+\.mm|vfirst\.m|vcpop\.m|vmerge[\w.]*)$")
 RVV_WMUL = re.compile(r"^vwmulu\.")
 
 
