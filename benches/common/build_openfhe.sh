@@ -24,7 +24,18 @@ BUILD="$SRC/build-n$NSIZE$DEPS_SUFFIX"
 PREFIX="$DEPS/stock$DEPS_SUFFIX/openfhe-n$NSIZE"
 LOGS="$DEPS/logs"
 TAG="OpenFHE n$NSIZE"
-STAMP="OpenFHE $OPENFHE_TAG NATIVE_SIZE=$NSIZE CXX=$CXX $("$CXX" -dumpversion) FLAGS=$NATIVE_FLAG"
+# OPENFHE_N32_NOVEC=1: the NATIVE_SIZE=32 library without auto-vectorisation (loop and SLP).
+# The flags go into CMAKE_CXX_FLAGS_RELEASE, which comes after OpenFHE's own -O3 on the
+# command line: clang re-enables its vectorisers at a later -O3, GCC does not.
+NOVEC=""
+if [ "$NSIZE" = "32" ] && [ "${OPENFHE_N32_NOVEC:-0}" = "1" ]; then
+  if "$CXX" --version 2>/dev/null | grep -qi clang; then
+    NOVEC="-fno-vectorize -fno-slp-vectorize"
+  else
+    NOVEC="-fno-tree-vectorize -fno-tree-slp-vectorize"
+  fi
+fi
+STAMP="OpenFHE $OPENFHE_TAG NATIVE_SIZE=$NSIZE CXX=$CXX $("$CXX" -dumpversion) FLAGS=$NATIVE_FLAG${NOVEC:+ NOVEC=$NOVEC}"
 
 if [ "${FORCE:-0}" != "1" ] && [ -f "$PREFIX/.ipcei-stamp" ] && [ "$(cat "$PREFIX/.ipcei-stamp")" = "$STAMP" ]; then
   echo "[$TAG] up to date in $PREFIX"
@@ -61,7 +72,7 @@ PATCH_EOF
 
 cmake_clean_stale_cache "$SRC" "$BUILD"
 rm -rf "$PREFIX"
-echo "[$TAG] configure (Release, OpenMP, NATIVE_SIZE=$NSIZE, '$NATIVE_FLAG'; $OS/$ARCH) ..."
+echo "[$TAG] configure (Release, OpenMP, NATIVE_SIZE=$NSIZE, '$NATIVE_FLAG'${NOVEC:+, '$NOVEC'}; $OS/$ARCH) ..."
 run_logged "$LOGS/openfhe-n$NSIZE$DEPS_SUFFIX-configure.log" "$TAG configure" \
   cmake -S "$SRC" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Release \
@@ -69,6 +80,8 @@ run_logged "$LOGS/openfhe-n$NSIZE$DEPS_SUFFIX-configure.log" "$TAG configure" \
   -DCMAKE_C_COMPILER="${CC:-cc}" \
   -DCMAKE_CXX_FLAGS="$NATIVE_FLAG" \
   -DCMAKE_C_FLAGS="$NATIVE_FLAG" \
+  -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG${NOVEC:+ $NOVEC}" \
+  -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG${NOVEC:+ $NOVEC}" \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_INSTALL_RPATH="$PREFIX/lib" \
   -DWITH_OPENMP=ON \

@@ -26,6 +26,12 @@
 # Environment: CXX/CC (default: clang++ on macOS, g++ on Linux, the newest RVA23 g++ on
 # riscv64), ARM_CPU=cortex-a78 (big.LITTLE boards: one build per core type),
 # RISCV_MARCH, RVV_HEXL_DIR, SEAL_TAG, OPENFHE_TAG, OPENFHE_HEXL_TAG.
+#   BUILD_TAG=name        a separate dependency set and bench dir, deps/<backend>-<name> and
+#                         build/<backend>-<name> (run.sh honours it too), for side-by-side
+#                         configurations, e.g. BUILD_TAG=gcc15 CXX=g++-15 RISCV_MARCH=rv64gcv
+#   OPENFHE_N32_NOVEC=1   stock OpenFHE NATIVE_SIZE=32 with auto-vectorisation disabled
+#                         (separates the narrow word from the vectorisation it enables);
+#                         use it with a BUILD_TAG, and check it with tools/vec_census.py
 #
 # --packages installs the system packages first (Homebrew / apt / dnf, with sudo).
 set -euo pipefail
@@ -199,7 +205,8 @@ build_benches() {
 		echo "backend   $b"
 		echo "libraries $BACKEND_INFO"
 		echo "compiler  $("$CXX" --version | head -1)"
-		echo "flags     $NATIVE_FLAG${ARM_CPU:+ (ARM_CPU=$ARM_CPU)}"
+		echo "flags     $NATIVE_FLAG${ARM_CPU:+ (ARM_CPU=$ARM_CPU)}${BUILD_TAG:+ (BUILD_TAG=$BUILD_TAG)}"
+		[ "${OPENFHE_N32_NOVEC:-0}" = "1" ] && echo "openfhe   NATIVE_SIZE=32 library built without auto-vectorisation"
 		echo "host      $(uname -n) $OS/$ARCH"
 		local suite
 		suite="$(git -C "$REPO" log -1 --format='%h %s' 2>/dev/null || echo unknown)"

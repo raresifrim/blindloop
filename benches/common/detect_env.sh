@@ -12,7 +12,9 @@
 #   HEXL_BACKEND           - the accelerated backend for this CPU: intel-hexl, rvv-hexl or empty
 #   RVV_HEXL_DIR           - the rvv-hexl checkout (riscv64; $RVV_HEXL_DIR, else ../rvv-hexl
 #                            next to this repo, else ~/rares/rvv-hexl, else ~/rvv-hexl)
-#   DEPS_SUFFIX            - "-$ARM_CPU" when ARM_CPU is set (one dependency set per core type)
+#   DEPS_SUFFIX            - "-$ARM_CPU" when ARM_CPU is set (one dependency set per core type),
+#                            plus "-$BUILD_TAG" when BUILD_TAG is set (a separate set of
+#                            dependencies and benches, e.g. another compiler or -march)
 #   NATIVE_FLAG            - -mcpu=native (arm; -mcpu=$ARM_CPU if set) or -march=native (x86)
 #   BREW_PREFIX           - `brew --prefix` if Homebrew is present, else empty
 #   PREFIX_INCLUDE PREFIX_LIB - header/lib search roots for gmp etc.
@@ -140,7 +142,7 @@ elif [ "$ARCH" = "riscv64" ] && [ "$HAS_RVV" = "1" ]; then
   fi
 fi
 
-DEPS_SUFFIX="${ARM_CPU:+-$ARM_CPU}"
+DEPS_SUFFIX="${ARM_CPU:+-$ARM_CPU}${BUILD_TAG:+-$BUILD_TAG}"
 
 # OpenMP: clang on macOS needs Homebrew libomp wired in by hand; gcc on Linux
 # supports -fopenmp out of the box, so no extra CMake flags are needed there.

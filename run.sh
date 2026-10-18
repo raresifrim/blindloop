@@ -7,13 +7,13 @@
 #   ./run.sh [--backends "stock rvv-hexl"] [--rounds R] [--stress-rounds R] [--only "bfv_seal ..."]
 #            [--label NAME] [--launch "PREFIX"] [--no-ntt]
 #
-#   --backends       default: every build/<backend>[-<ARM_CPU>] that build.sh produced
+#   --backends       default: every build/<backend>[-<ARM_CPU>][-<BUILD_TAG>] that build.sh produced
 #   --rounds         measured rounds of the protocol benches (default 12, plus 1 warm-up:
 #                    every case of the window-lift scenario once)
 #   --stress-rounds  measured rounds of the TFHE stress mode (raw signals; default 12)
 #   --only           run only these benches: zk_selftest bfv_seal bfv_openfhe tfhe_flags
 #                    tfhe_stress tfhe_n32_flags tfhe_n32_stress ntt_seal ntt_openfhe
-#   --label          results/<label>/ (default: the host name, + -<ARM_CPU> when set)
+#   --label          results/<label>/ (default: the host name, + -<ARM_CPU> and -<BUILD_TAG> when set)
 #   --launch         command prefix for every bench, e.g. "taskset -c 4-7" (one cluster of a
 #                    big.LITTLE board) or the K3's A100 launcher
 #   --no-ntt         skip the NTT microbenches
@@ -49,7 +49,7 @@ done
 # single-core nodes: one OpenMP thread unless the caller sets OMP_NUM_THREADS
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 
-SUFFIX="${ARM_CPU:+-$ARM_CPU}"
+SUFFIX="${ARM_CPU:+-$ARM_CPU}${BUILD_TAG:+-$BUILD_TAG}"
 if [ -z "$BACKENDS" ]; then
 	for b in stock intel-hexl rvv-hexl; do
 		[ -f "$REPO/build/$b$SUFFIX/BUILD_INFO" ] && BACKENDS="$BACKENDS $b"
