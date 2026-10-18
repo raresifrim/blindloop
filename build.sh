@@ -149,8 +149,10 @@ build_deps() {
 		rvv-hexl)
 			# rvv-hexl's own targets: incremental, and each reinstalls rvv-hexl first so
 			# OpenFHE and SEAL pick up its current kernels. Same compiler as the benches.
+			# OpenFHE's own unit tests and benchmarks are the heaviest part of that build
+			# (memory included) and the suite does not use them
 			local mk=(make --no-print-directory -C "$RVV_HEXL_DIR" ISA=$RVV_ISA CXX="$CXX" CC="${CC:-gcc}"
-				JOBS="$NPROC" WITH_RVV_HEXL=ON)
+				JOBS="$NPROC" WITH_RVV_HEXL=ON OPENFHE_UNITTESTS=OFF OPENFHE_BENCHMARKS=OFF)
 			echo "[rvv-hexl] SEAL ..."
 			"${mk[@]}" seal
 			echo "[rvv-hexl] OpenFHE n64 ..."
