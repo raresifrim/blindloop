@@ -212,9 +212,11 @@ private:
 	std::vector<std::string> notes_;
 };
 
-/// Optional profiling of the central node alone: with BLINDLOOP_PERF_CTL=<ctl fifo>,<ack fifo>
-/// (perf record --control fifo:<ctl>,<ack> -D -1 ...), perf counts only while a central-node
-/// step of a measured round runs; setup, warm-up and the end zones stay out of the profile.
+/// Optional profiling of one node: with BLINDLOOP_PERF_CTL=<ctl fifo>,<ack fifo> (perf record
+/// --control fifo:<ctl>,<ack> -D -1 ...), perf counts only while a step of that node in a
+/// measured round runs; setup, warm-up and the other nodes stay out of the profile. The node
+/// is BLINDLOOP_PERF_ZONE (central, passenger, driver or ign; default central). Used by
+/// tools/profile.sh.
 class PerfControl {
 public:
 	static PerfControl& Get() {
@@ -222,6 +224,7 @@ public:
 		return pc;
 	}
 	bool active() const { return ctl_ >= 0; }
+	Zone zone() const { return zone_; }
 	void Set(bool on) {
 		const char* cmd = on ? "enable\n" : "disable\n";
 		if (write(ctl_, cmd, std::strlen(cmd)) < 0) return;
@@ -236,11 +239,16 @@ private:
 		const std::string s(v);
 		const size_t c = s.find(',');
 		if (c == std::string::npos) return;
+		if (const char* z = std::getenv("BLINDLOOP_PERF_ZONE")) {
+			const std::string zs(z);
+			zone_ = zs == "passenger" ? Zone::Passenger : zs == "driver" ? Zone::Driver : zs == "ign" ? Zone::Ign : Zone::Central;
+		}
 		ctl_ = open(s.substr(0, c).c_str(), O_WRONLY);
 		ack_ = open(s.substr(c + 1).c_str(), O_RDONLY);
 		if (ctl_ < 0 || ack_ < 0) ctl_ = -1;
 	}
 	int ctl_ = -1, ack_ = -1;
+	Zone zone_ = Zone::Central;
 };
 
 /// Base of a bench's zone nodes: timed() records one protocol step of this zone.
@@ -254,7 +262,7 @@ protected:
 	/// Runs f() and adds its wall time to step `id` of this zone in the current round.
 	template <class F>
 	auto timed(const char* id, F&& f) -> decltype(f()) {
-		const bool prof = zone_ == Zone::Central && PerfControl::Get().active() && rec_.measuring();
+		const bool prof = PerfControl::Get().active() && zone_ == PerfControl::Get().zone() && rec_.measuring();
 		if (prof) PerfControl::Get().Set(true);
 		struct Stop {
 			Recorder& r;

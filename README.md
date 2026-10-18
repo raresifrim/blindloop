@@ -57,6 +57,8 @@ Every protocol bench also runs these, for real, in every round:
 
 The ZK code is the vendored [`third_party/adsc-snark`](third_party/adsc-snark/VENDORED.md). It always uses BN254, portable field arithmetic and a single thread, so ZK timings stay comparable across machines.
 
+**Profiles** (Linux, `perf`): `tools/profile.sh --backend rvv-hexl --label k3-x100 --launch "taskset -c 0-7"` profiles each protocol bench one node at a time (`--zones "central passenger"`). The harness enables perf only during that node's steps in the measured rounds, so setup, key generation, warm-up and the other nodes stay out of the profile. Each run writes the self-time, inclusive-time and per-library reports to `results/<label>/profile/`.
+
 Microbenches: `ntt_seal` and `ntt_openfhe` (forward/inverse NTT per size and prime width), `tfhe_lut_openfhe` (LUT vs gate evaluation), and `zk_selftest` (checks every zone's proof in both encodings and both signature schemes, checks that replays and tampering are rejected, and times each operation).
 
 ## Backends
