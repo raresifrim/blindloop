@@ -30,6 +30,7 @@
 // One-time setup (key generation, provisioning) is not reported.
 #pragma once
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -158,6 +159,8 @@ public:
 	explicit Recorder(int warmup = 1) : warmup_(warmup) {}
 
 	void BeginRound() { rounds_.emplace_back(); }
+	/// True once the warm-up rounds are over.
+	bool measuring() const { return (int)rounds_.size() > warmup_; }
 	void Add(Zone z, const char* id, double ms) {
 		const StepDef* s = FindStep(z, id);
 		if (!s) {
@@ -209,6 +212,37 @@ private:
 	std::vector<std::string> notes_;
 };
 
+/// Optional profiling of the central node alone: with BLINDLOOP_PERF_CTL=<ctl fifo>,<ack fifo>
+/// (perf record --control fifo:<ctl>,<ack> -D -1 ...), perf counts only while a central-node
+/// step of a measured round runs; setup, warm-up and the end zones stay out of the profile.
+class PerfControl {
+public:
+	static PerfControl& Get() {
+		static PerfControl pc;
+		return pc;
+	}
+	bool active() const { return ctl_ >= 0; }
+	void Set(bool on) {
+		const char* cmd = on ? "enable\n" : "disable\n";
+		if (write(ctl_, cmd, std::strlen(cmd)) < 0) return;
+		char ack[8];
+		if (read(ack_, ack, sizeof ack) < 0) return;
+	}
+
+private:
+	PerfControl() {
+		const char* v = std::getenv("BLINDLOOP_PERF_CTL");
+		if (!v) return;
+		const std::string s(v);
+		const size_t c = s.find(',');
+		if (c == std::string::npos) return;
+		ctl_ = open(s.substr(0, c).c_str(), O_WRONLY);
+		ack_ = open(s.substr(c + 1).c_str(), O_RDONLY);
+		if (ctl_ < 0 || ack_ < 0) ctl_ = -1;
+	}
+	int ctl_ = -1, ack_ = -1;
+};
+
 /// Base of a bench's zone nodes: timed() records one protocol step of this zone.
 class Participant {
 public:
@@ -220,13 +254,19 @@ protected:
 	/// Runs f() and adds its wall time to step `id` of this zone in the current round.
 	template <class F>
 	auto timed(const char* id, F&& f) -> decltype(f()) {
+		const bool prof = zone_ == Zone::Central && PerfControl::Get().active() && rec_.measuring();
+		if (prof) PerfControl::Get().Set(true);
 		struct Stop {
 			Recorder& r;
 			Zone z;
 			const char* id;
+			bool prof;
 			Clock::time_point t0;
-			~Stop() { r.Add(z, id, MsSince(t0)); }
-		} stop{rec_, zone_, id, Clock::now()};
+			~Stop() {
+				r.Add(z, id, MsSince(t0));
+				if (prof) PerfControl::Get().Set(false);
+			}
+		} stop{rec_, zone_, id, prof, Clock::now()};
 		return f();
 	}
 	Recorder& rec_;
