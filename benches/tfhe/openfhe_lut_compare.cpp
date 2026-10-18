@@ -19,7 +19,12 @@
 // Comparison encoding: with EvalSign returning 1 iff the message >= p/2, we form
 //   m = p/2 + threshold - reading   (homomorphically: negate ct, add (p/2+thr)*Delta)
 // so m >= p/2  <=>  reading < threshold  =>  flag = EvalSign(m). Requires p > 2^(w+1).
+//
+// --serial measures the alternative instead: the reading encrypted bit by bit and the
+// bit-serial comparator of the stress bench (comparator.hpp) on gate bootstraps (GINX,
+// the same parameter set), timed per sensor with its gate count.
 // ---------------------------------------------------------------------------
+#include "comparator.hpp"
 #include <cstdint>
 #include <chrono>
 #include <cmath>
@@ -57,6 +62,7 @@ static LWECiphertext shiftForCompare(const LWECiphertext& ct, uint64_t threshold
 
 int main(int argc, char** argv) {
     int S = 5, w = 8, rounds = 3, logQ = 0;
+    bool serial = false;
     std::string paramset = "STD128";
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
@@ -65,9 +71,10 @@ int main(int argc, char** argv) {
         else if (a == "--rounds"   && i+1 < argc) rounds = std::atoi(argv[++i]);
         else if (a == "--logq"     && i+1 < argc) logQ = std::atoi(argv[++i]);
         else if (a == "--paramset" && i+1 < argc) paramset = argv[++i];
+        else if (a == "--serial") serial = true;
         else if (a == "--help") {
             std::cout << "usage: " << argv[0] << " [--paramset STD128|STD128Q_4|...]"
-                         " [--width w] [--sensors S] [--rounds R] [--logq N]\n"
+                         " [--width w] [--sensors S] [--rounds R] [--logq N] [--serial]\n"
                          "  default logQ = w+10 (so plaintext space p > 2^(w+1) for the sign compare)\n";
             return 0;
         }
@@ -77,6 +84,36 @@ int main(int argc, char** argv) {
     else if (paramset == "STD128Q_3") ps = STD128Q_3;
     else if (paramset == "STD128_3")  ps = STD128_3;
     else if (paramset == "STD128_4")  ps = STD128_4;
+    if (serial) {   // bit-serial comparator on gate bootstraps, timed per sensor
+        std::cout << "=== TFHE bit-serial w-bit comparison (gate bootstrapping) ===\n";
+        std::cout << "paramset=" << paramset << " (GINX)  width=" << w << "-bit  sensors=" << S << "  rounds=" << rounds << "\n";
+        BinFHEContext cc;
+        cc.GenerateBinFHEContext(ps, GINX);
+        auto sk = cc.KeyGen();
+        cc.BTKeyGen(sk);
+        std::mt19937 rng(1234);
+        std::uniform_int_distribution<uint32_t> dist(0, (w >= 32) ? 0xFFFFFFFFu : ((1u << w) - 1));
+        double acc = 0; long gates_total = 0; int ok = 0, tot = 0;
+        for (int r = 0; r < rounds; ++r) {
+            for (int s = 0; s < S; ++s) {
+                uint32_t reading = dist(rng), threshold = dist(rng);
+                std::vector<LWECiphertext> bits;
+                for (int j = 0; j < w; ++j) bits.push_back(cc.Encrypt(sk, (reading >> j) & 1u));
+                long gates = 0;
+                auto tc = Clock::now();
+                auto flag = ipcei::LessThanPublic(cc, bits, threshold, gates);
+                acc += ms(tc, Clock::now());
+                gates_total += gates;
+                LWEPlaintext fv; cc.Decrypt(sk, flag, &fv);
+                tot++; if (((int)fv & 1) == (int)(reading < threshold)) ok++;
+            }
+        }
+        std::cout << "\n=== summary (" << paramset << ", " << w << "-bit, bit-serial) ===\n";
+        std::cout << "flag correctness            : " << ok << "/" << tot << "\n";
+        std::cout << "comparison / sensor         : " << std::fixed << std::setprecision(1) << acc / tot << " ms   ("
+                  << std::setprecision(1) << (double)gates_total / tot << " gate bootstraps on average)\n";
+        return (ok == tot) ? 0 : 4;
+    }
     if (logQ == 0) logQ = w + 10;                          // p = 2^(logQ-9) > 2^(w+1)
 
     std::cout << "=== TFHE §5a middle path — EvalSign w-bit comparison (functional bootstrap) ===\n";
@@ -156,6 +193,5 @@ int main(int argc, char** argv) {
     std::cout << "comparison / sensor         : " << std::setprecision(1) << per << " ms   ("
               << (single ? "1 EvalFunc PBS" : "EvalSign multi-PBS") << ")\n";
     std::cout << "central compares / round    : " << per*S << " ms   (" << S << " x 1 EvalSign)\n";
-    std::cout << "vs bit-serial 32-bit stress : ~2130 ms/sensor  (~44 gate-bootstraps)\n";
     return (flag_ok == flag_tot) ? 0 : 4;
 }

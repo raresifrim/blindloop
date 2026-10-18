@@ -59,6 +59,7 @@
 #include "binfhe/binfhecontext.h"
 
 #include "ipcei/harness.hpp"
+#include "comparator.hpp"
 #include "ipcei/scenario.hpp"
 #include "ipcei/sig.hpp"
 #include "ipcei/zk.hpp"
@@ -89,43 +90,6 @@ Bytes Serialize(const T& obj) {
 
 int ZoneIndex(Zone z) { return (int)z; }  // passenger 0, driver 1, ign 2
 
-// ---- bit-serial comparator: encrypted a < PUBLIC constant c ----
-// a is an LSB-first vector of encrypted bits, c a public w-bit threshold (a limit the
-// central node knows). Recurrence, LSB to MSB (higher bits override):
-//   c_i = 1:  lt = OR(NOT a_i, AND(a_i, lt))       c_i = 0:  lt = AND(NOT a_i, lt)
-// Below the lowest set bit of c, lt is identically false, so it is seeded there as
-// NOT a_low (free) and the lower bits are skipped. EvalNOT is free; AND / OR bootstrap.
-LWECiphertext LessThanPublic(BinFHEContext& cc, const std::vector<LWECiphertext>& a, uint32_t c, long& gates) {
-	const size_t w = a.size();
-	int low = -1;
-	for (size_t i = 0; i < w; ++i) {
-		if ((c >> i) & 1u) {
-			low = (int)i;
-			break;
-		}
-	}
-	LWECiphertext lt;
-	size_t start;
-	if (low < 0) {  // c == 0: a < c is false, an encrypted 0 = a0 AND NOT a0
-		lt = cc.EvalBinGate(AND, a[0], cc.EvalNOT(a[0]));
-		gates++;
-		start = 1;
-	} else {
-		lt = cc.EvalNOT(a[low]);
-		start = (size_t)low + 1;
-	}
-	for (size_t i = start; i < w; ++i) {
-		if ((c >> i) & 1u) {
-			LWECiphertext t = cc.EvalBinGate(AND, a[i], lt);
-			lt = cc.EvalBinGate(OR, cc.EvalNOT(a[i]), t);
-			gates += 2;
-		} else {
-			lt = cc.EvalBinGate(AND, cc.EvalNOT(a[i]), lt);
-			gates++;
-		}
-	}
-	return lt;
-}
 
 // ---- seeded LWE ----
 // An LWE ciphertext is (a, b), b = <a, s> + e + m. The mask a is uniform, so if both
@@ -376,8 +340,8 @@ public:
 				pd = P[window::kRawDown];
 				const std::vector<LWECiphertext> pos(P.begin() + window::kRawPos,
 						P.begin() + window::kRawPos + window::kPositionBits);
-				top = NOT(LessThanPublic(cc_, pos, window::kTop, gates));        // position >= kTop
-				bot = LessThanPublic(cc_, pos, window::kBottom + 1, gates);      // position <= kBottom
+				top = NOT(ipcei::LessThanPublic(cc_, pos, window::kTop, gates));        // position >= kTop
+				bot = ipcei::LessThanPublic(cc_, pos, window::kBottom + 1, gates);      // position <= kBottom
 				err = P[window::kRawErr];
 				for (int j = 1; j < window::kErrorFlags; ++j) err = gate(OR, err, P[window::kRawErr + j]);
 			}
