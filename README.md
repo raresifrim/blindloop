@@ -37,7 +37,7 @@ One-time setup (key generation, provisioning, SNARK key generation) is not repor
 |---|---|---|---|
 | `bfv_seal` | BFV | Microsoft SEAL 4.1.2 | lifts each zone's seeded LWE values to RLWE (EvalTrace), evaluates the decision on MAC-tagged polynomials |
 | `bfv_openfhe` | BFV | OpenFHE 1.5.1 | aligns the zones' packed ciphertexts with rotations, evaluates the decision with a packed MAC (evaluation form, 3 instances) |
-| `tfhe_openfhe` | TFHE (GINX) | OpenFHE 1.5.1 binfhe | `--mode flags`: the zones send their derived bits and the decision takes 11 bootstrapped gates; `--mode stress`: the zones send their raw signals bit by bit and the central compute also derives Full Up / Full Down (two 12-bit comparators) and the motor-error OR |
+| `tfhe_openfhe` | TFHE (GINX) | OpenFHE 1.5.1 binfhe | `--mode flags`: the zones send their derived bits and the decision takes 7 bootstrapped gates; `--mode stress`: the zones send their raw signals bit by bit and the central compute also derives Full Up / Full Down (two 12-bit comparators) and the motor-error OR, 17 gates. OpenFHE's 3-input gates (AND3 / OR3, STD128_3); `--arity 2` runs the 2-input gates on STD128 (11 and 26) |
 | `tfhe_openfhe_n32` | TFHE (GINX) | OpenFHE 1.5.1, `NATIVE_SIZE=32` | as above, 32-bit words |
 
 Every protocol bench also runs these, for real, in every round:

@@ -21,8 +21,9 @@
 // so m >= p/2  <=>  reading < threshold  =>  flag = EvalSign(m). Requires p > 2^(w+1).
 //
 // --serial measures the alternative instead: the reading encrypted bit by bit and the
-// bit-serial comparator of the stress bench (comparator.hpp) on gate bootstraps (GINX,
-// the same parameter set), timed per sensor with its gate count.
+// bit-serial comparator of the stress bench (comparator.hpp) on the harness's gate
+// bootstraps (GINX, 3-input gates on STD128_3 by default, --arity 2 for STD128), timed per
+// sensor with its gate count.
 // ---------------------------------------------------------------------------
 #include "comparator.hpp"
 #include <cstdint>
@@ -61,7 +62,7 @@ static LWECiphertext shiftForCompare(const LWECiphertext& ct, uint64_t threshold
 }
 
 int main(int argc, char** argv) {
-    int S = 5, w = 8, rounds = 3, logQ = 0;
+    int S = 5, w = 8, rounds = 3, logQ = 0, arity = 3;
     bool serial = false;
     std::string paramset = "STD128";
     for (int i = 1; i < argc; ++i) {
@@ -72,9 +73,10 @@ int main(int argc, char** argv) {
         else if (a == "--logq"     && i+1 < argc) logQ = std::atoi(argv[++i]);
         else if (a == "--paramset" && i+1 < argc) paramset = argv[++i];
         else if (a == "--serial") serial = true;
+        else if (a == "--arity"    && i+1 < argc) arity = std::atoi(argv[++i]);
         else if (a == "--help") {
             std::cout << "usage: " << argv[0] << " [--paramset STD128|STD128Q_4|...]"
-                         " [--width w] [--sensors S] [--rounds R] [--logq N] [--serial]\n"
+                         " [--width w] [--sensors S] [--rounds R] [--logq N] [--serial [--arity 3|2]]\n"
                          "  default logQ = w+10 (so plaintext space p > 2^(w+1) for the sign compare)\n";
             return 0;
         }
@@ -85,8 +87,13 @@ int main(int argc, char** argv) {
     else if (paramset == "STD128_3")  ps = STD128_3;
     else if (paramset == "STD128_4")  ps = STD128_4;
     if (serial) {   // bit-serial comparator on gate bootstraps, timed per sensor
+        if (arity != 2 && arity != 3) { std::cerr << "--arity 2|3\n"; return 2; }
+        ps = ipcei::GateParamSet(arity);  // the harness's gates (comparator.hpp)
+        paramset = arity == 2 ? "STD128" : "STD128_3";
+        const int p = ipcei::GatePlaintextModulus(arity);
         std::cout << "=== TFHE bit-serial w-bit comparison (gate bootstrapping) ===\n";
-        std::cout << "paramset=" << paramset << " (GINX)  width=" << w << "-bit  sensors=" << S << "  rounds=" << rounds << "\n";
+        std::cout << "paramset=" << paramset << " (GINX)  gate inputs=" << arity << "  width=" << w << "-bit  sensors=" << S
+                  << "  rounds=" << rounds << "\n";
         BinFHEContext cc;
         cc.GenerateBinFHEContext(ps, GINX);
         auto sk = cc.KeyGen();
@@ -98,13 +105,14 @@ int main(int argc, char** argv) {
             for (int s = 0; s < S; ++s) {
                 uint32_t reading = dist(rng), threshold = dist(rng);
                 std::vector<LWECiphertext> bits;
-                for (int j = 0; j < w; ++j) bits.push_back(cc.Encrypt(sk, (reading >> j) & 1u));
+                for (int j = 0; j < w; ++j) bits.push_back(cc.Encrypt(sk, (reading >> j) & 1u, SMALL_DIM, p));
                 long gates = 0;
+                const ipcei::Gates G(cc, arity, bits[0]->GetLength(), bits[0]->GetModulus(), gates);
                 auto tc = Clock::now();
-                auto flag = ipcei::LessThanPublic(cc, bits, threshold, gates);
+                auto flag = ipcei::LessThanPublic(G, bits, threshold);
                 acc += ms(tc, Clock::now());
                 gates_total += gates;
-                LWEPlaintext fv; cc.Decrypt(sk, flag, &fv);
+                LWEPlaintext fv; cc.Decrypt(sk, flag, &fv, p);
                 tot++; if (((int)fv & 1) == (int)(reading < threshold)) ok++;
             }
         }

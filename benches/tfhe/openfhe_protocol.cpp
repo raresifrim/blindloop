@@ -29,21 +29,28 @@
 //
 // Two modes (--mode):
 //   flags   the zones encrypt FlagBits (passenger pu, pd, top, bot, err; driver ou, od, cl;
-//           ign k). Central gate circuit (EvalNOT is free, every other gate bootstraps):
-//             ovr = OR(ou, od)      a = NOR(ovr, cl)
-//             up = OR(ou, AND(a, pu))      dn = OR(od, AND(a, pd))
-//             g = AND(k, NOT err)   T = AND(NOT top, g)   B = AND(NOT bot, g)
-//             Motor+ = AND(up, T)   Motor- = AND(dn, B)                  11 bootstraps
+//           ign k). Central gate circuit (comparator.hpp Gates; NOT is free, every AND / OR
+//           bootstraps once for up to --arity inputs):
+//             up = OR(ou, AND(NOT od, NOT cl, pu))    dn = OR(od, AND(NOT ou, NOT cl, pd))
+//             g = AND(k, NOT err)
+//             Motor+ = AND(up, g, NOT top)            Motor- = AND(dn, g, NOT bot)
+//           (the overwrite excludes the other direction, so up = ou OR (a AND pu) with
+//           a = NOT ou AND NOT od AND NOT cl). 7 bootstraps with 3-input gates, 11 with 2.
 //   stress  the zones encrypt RawBits (the passenger's 12 position bits and 4 error flags
 //           instead of top, bot, err). The central node derives top = NOT(position < kTop)
 //           and bot = position < kBottom + 1 with bit-serial comparators against the public
-//           limits and err = OR of the four flags, then runs the same circuit: 6 + 6
-//           comparator bootstraps (one per position bit above the limit's lowest set bit),
-//           3 for the error OR, 11 for the decision = 26 bootstraps.
+//           limits and err = OR of the four flags, then runs the same circuit:
+//           3-input gates: 4 + 4 comparator bootstraps, 2 for the error OR, 7 = 17;
+//           2-input gates: 6 + 6, 3, 11 = 26.
+// Gates (--arity): 3 (default) = OpenFHE's AND3 / OR3 on STD128_3, every ciphertext at
+// plaintext modulus 6 (the zones encrypt and the passenger decrypts at p = 6); 2 = the
+// 2-input gates on STD128 (p = 4). Measured on every platform: 3-input gates need 1.4-1.5x
+// less evaluation time (fewer bootstraps, each slightly dearer); 4-input gates (STD128_4)
+// cost nearly as much per gate as they save.
 // The first Rounds::kCases measured rounds cover every case of the decision; the warm-up
 // rounds draw from a separate generator so they do not shift them.
 //
-//   tfhe_openfhe [--mode flags|stress] [--paramset STD128|STD128_4|MEDIUM|TOY] [--no-compress]
+//   tfhe_openfhe [--mode flags|stress] [--arity 3|2] [--paramset STD128|STD128_3|MEDIUM|TOY] [--no-compress]
 //                [--seed N] [--rounds R] [--warmup W] [--json FILE] [--quiet]
 #include <cstdint>
 #include <cstdio>
@@ -136,6 +143,8 @@ Bytes LinkMessage(int round, Zone zone, const Bytes& payload) {
 struct Config {
 	bool flags = true;
 	bool compress = true;
+	int arity = 3;  // gate inputs: 3 (AND3 / OR3 on STD128_3, the default) or 2 (STD128), comparator.hpp
+	int p() const { return ipcei::GatePlaintextModulus(arity); }
 	zk::Encoding encoding() const { return flags ? zk::Encoding::Flags : zk::Encoding::Raw; }
 	std::vector<uint8_t> Bits(Zone z, const window::Inputs& in) const {
 		return flags ? window::FlagBits(z, in) : window::RawBits(z, in);
@@ -183,7 +192,7 @@ public:
 		std::vector<LWECiphertext> cts;
 		timed("encrypt", [&] {
 			cts.reserve(bits.size());
-			for (uint8_t b : bits) cts.push_back(cc_.Encrypt(sk_, b));
+			for (uint8_t b : bits) cts.push_back(cc_.Encrypt(sk_, b, SMALL_DIM, cfg_.p()));
 		});
 		full_bytes_ = 0;
 		for (const auto& c : cts) full_bytes_ += Serialize(c).size();
@@ -248,7 +257,7 @@ public:
 				LWECiphertext ct;
 				Serial::Deserialize(ct, ss, SerType::BINARY);
 				LWEPlaintext out;
-				cc_.Decrypt(sk_, ct, &out);
+				cc_.Decrypt(sk_, ct, &out, cfg_.p());
 				motor[j] = (int)(out & 1);
 			}
 		});
@@ -312,7 +321,7 @@ public:
 			for (size_t c = 0; c < count; ++c) {
 				uint64_t b = 0;
 				std::memcpy(&b, in + c * body_bytes, body_bytes);
-				cts[c] = std::make_shared<LWECiphertextImpl>(std::move(masks[c]), NativeInteger(b), NativeInteger(4));
+				cts[c] = std::make_shared<LWECiphertextImpl>(std::move(masks[c]), NativeInteger(b), NativeInteger(cfg_.p()));
 			}
 			return true;
 		});
@@ -323,11 +332,7 @@ public:
 		LWECiphertext motor_up, motor_down;
 		timed("evaluate", [&] {
 			long gates = 0;
-			auto gate = [&](BINGATE g, const LWECiphertext& x, const LWECiphertext& y) {
-				gates++;
-				return cc_.EvalBinGate(g, x, y);
-			};
-			auto NOT = [&](const LWECiphertext& x) { return cc_.EvalNOT(x); };
+			const ipcei::Gates G(cc_, cfg_.arity, shape_.n, shape_.q, gates);
 			const auto& P = cts_[ZoneIndex(Zone::Passenger)];
 			const auto& D = cts_[ZoneIndex(Zone::Driver)];
 			const auto& I = cts_[ZoneIndex(Zone::Ign)];
@@ -343,25 +348,23 @@ public:
 				pd = P[window::kRawDown];
 				const std::vector<LWECiphertext> pos(P.begin() + window::kRawPos,
 						P.begin() + window::kRawPos + window::kPositionBits);
-				top = NOT(ipcei::LessThanPublic(cc_, pos, window::kTop, gates));        // position >= kTop
-				bot = ipcei::LessThanPublic(cc_, pos, window::kBottom + 1, gates);      // position <= kBottom
-				err = P[window::kRawErr];
-				for (int j = 1; j < window::kErrorFlags; ++j) err = gate(OR, err, P[window::kRawErr + j]);
+				top = G.Not(ipcei::LessThanPublic(G, pos, window::kTop));   // position >= kTop
+				bot = ipcei::LessThanPublic(G, pos, window::kBottom + 1);   // position <= kBottom
+				err = G.Or(std::vector<LWECiphertext>(P.begin() + window::kRawErr,
+						P.begin() + window::kRawErr + window::kErrorFlags));
 			}
 			const LWECiphertext& ou = D[window::kOu];
 			const LWECiphertext& od = D[window::kOd];
 			const LWECiphertext& cl = D[window::kCl];
 			const LWECiphertext& k = I[window::kK];
 
-			const LWECiphertext ovr = gate(OR, ou, od);
-			const LWECiphertext a = gate(NOR, ovr, cl);  // AND(NOT ovr, NOT cl): the passenger's button is allowed
-			const LWECiphertext up = gate(OR, ou, gate(AND, a, pu));
-			const LWECiphertext dn = gate(OR, od, gate(AND, a, pd));
-			const LWECiphertext g = gate(AND, k, NOT(err));
-			const LWECiphertext T = gate(AND, NOT(top), g);
-			const LWECiphertext B = gate(AND, NOT(bot), g);
-			motor_up = gate(AND, up, T);
-			motor_down = gate(AND, dn, B);
+			// the overwrite excludes the other direction: up = ou OR (a AND pu) with
+			// a = NOT ou AND NOT od AND NOT cl is ou OR (NOT od AND NOT cl AND pu)
+			const LWECiphertext up = G.Or({ou, G.And({G.Not(od), G.Not(cl), pu})});
+			const LWECiphertext dn = G.Or({od, G.And({G.Not(ou), G.Not(cl), pd})});
+			const LWECiphertext g = G.And({k, G.Not(err)});
+			motor_up = G.And({up, g, G.Not(top)});
+			motor_down = G.And({dn, g, G.Not(bot)});
 			gates_ = gates;
 		});
 		dn.round = round;
@@ -399,7 +402,7 @@ int main(int argc, char** argv) {
 	const ipcei::Options opts = ipcei::Options::Parse(argc, argv, window::Rounds::kCases);
 	ipcei::net::Network net(opts);  // first: it forks its peer processes
 	Config cfg;
-	std::string paramset = "STD128";
+	std::string paramset;  // default: the parameter set of the gates (comparator.hpp)
 	unsigned seed = 12345;
 	for (size_t i = 0; i < opts.rest.size(); ++i) {
 		const std::string& a = opts.rest[i];
@@ -418,6 +421,13 @@ int main(int argc, char** argv) {
 			}
 			cfg.flags = m == "flags";
 		} else if (a == "--paramset") paramset = next();
+		else if (a == "--arity") {
+			cfg.arity = std::atoi(next().c_str());
+			if (cfg.arity != 2 && cfg.arity != 3) {
+				std::fprintf(stderr, "--arity 2|3\n");
+				return 2;
+			}
+		}
 		else if (a == "--no-compress") cfg.compress = false;
 		else if (a == "--seed") seed = (unsigned)std::atoi(next().c_str());
 		else {
@@ -427,10 +437,13 @@ int main(int argc, char** argv) {
 	}
 
 	// ---- one-time provisioning (not reported) ----
-	BINFHE_PARAMSET ps = STD128;
-	if (paramset == "TOY") ps = TOY;
-	else if (paramset == "STD128_4") ps = STD128_4;
-	else if (paramset == "MEDIUM") ps = MEDIUM;
+	BINFHE_PARAMSET ps = ipcei::GateParamSet(cfg.arity);
+	if (paramset.empty()) paramset = cfg.arity == 2 ? "STD128" : "STD128_3";
+	else if (cfg.arity == 2 && (paramset == "TOY" || paramset == "MEDIUM")) ps = paramset == "TOY" ? TOY : MEDIUM;
+	else if (paramset != (cfg.arity == 2 ? "STD128" : "STD128_3")) {
+		std::fprintf(stderr, "--paramset %s: not for %d-input gates\n", paramset.c_str(), cfg.arity);
+		return 2;
+	}
 	BinFHEContext cc;
 	cc.GenerateBinFHEContext(ps, GINX);
 	LWEPrivateKey sk = cc.KeyGen();  // into the HSEs of the three end zones
@@ -460,6 +473,8 @@ int main(int argc, char** argv) {
 
 	rec.Param("mode", cfg.flags ? "flags" : "stress");
 	rec.Param("paramset", paramset + " (GINX)");
+	rec.Param("gate inputs", cfg.arity);
+	rec.Param("plaintext modulus p", cfg.p());
 	rec.Param("native_size", NATIVEINT);
 	rec.Param("lwe_n", shape.n);
 	rec.Param("lwe_q", (double)shape.q.ConvertToInt());
