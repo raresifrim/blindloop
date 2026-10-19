@@ -62,7 +62,7 @@ def load(d):
 
 
 def median(entry):
-    return entry["stats"]["median_ms"] if entry.get("applicable") else None
+    return entry["stats"]["median_ms"] if entry and entry.get("applicable") else None
 
 
 def bench_table(name, backends, data):
@@ -87,7 +87,9 @@ def bench_table(name, backends, data):
         for i, st in enumerate(base["steps"]):
             if st["zone"] != zone:
                 continue
-            vals = [median(r["steps"][i]) for _, r in runs]
+            # match by (zone, id): runs of different harness versions may differ in their steps
+            vals = [median(next((x for x in r["steps"] if x["zone"] == zone and x["id"] == st["id"]), None))
+                    for _, r in runs]
             if all(v is None for v in vals):
                 continue
             label = ("[downlink] " if st["phase"] == "downlink" else "") + st["label"]
