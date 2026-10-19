@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 // §5a MIDDLE PATH — compare a w-bit sensor reading against a public threshold
 // with a functional bootstrap, instead of the bit-serial 32-bit comparator
-// (~44 gate-bootstraps/sensor in the stress bench).
+// (one gate bootstrap per bit above the threshold's lowest set bit, comparator.hpp).
 //
 // Two facts this bench establishes on OpenFHE binfhe:
 //   1. a SINGLE programmable bootstrap (EvalFunc/LUT) only spans the plaintext

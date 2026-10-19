@@ -15,7 +15,9 @@ namespace ipcei {
 // ---- bit-serial comparator: encrypted a < PUBLIC constant c ----
 // a is an LSB-first vector of encrypted bits, c a public w-bit threshold (a limit the
 // central node knows). Recurrence, LSB to MSB (higher bits override):
-//   c_i = 1:  lt = OR(NOT a_i, AND(a_i, lt))       c_i = 0:  lt = AND(NOT a_i, lt)
+//   c_i = 1:  lt = OR(NOT a_i, lt)                 c_i = 0:  lt = AND(NOT a_i, lt)
+// For c_i = 1, a < c on bits i.. holds when a_i = 0, or when a_i = 1 and a < c below it:
+// NOT a_i OR (a_i AND lt), which absorbs to NOT a_i OR lt. One bootstrap per bit.
 // Below the lowest set bit of c, lt is identically false, so it is seeded there as
 // NOT a_low (free) and the lower bits are skipped. EvalNOT is free; AND / OR bootstrap.
 inline lbcrypto::LWECiphertext LessThanPublic(lbcrypto::BinFHEContext& cc, const std::vector<lbcrypto::LWECiphertext>& a, uint32_t c, long& gates) {
@@ -40,9 +42,8 @@ inline lbcrypto::LWECiphertext LessThanPublic(lbcrypto::BinFHEContext& cc, const
 	}
 	for (size_t i = start; i < w; ++i) {
 		if ((c >> i) & 1u) {
-			LWECiphertext t = cc.EvalBinGate(AND, a[i], lt);
-			lt = cc.EvalBinGate(OR, cc.EvalNOT(a[i]), t);
-			gates += 2;
+			lt = cc.EvalBinGate(OR, cc.EvalNOT(a[i]), lt);
+			gates++;
 		} else {
 			lt = cc.EvalBinGate(AND, cc.EvalNOT(a[i]), lt);
 			gates++;

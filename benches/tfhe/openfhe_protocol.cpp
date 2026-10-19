@@ -37,7 +37,9 @@
 //   stress  the zones encrypt RawBits (the passenger's 12 position bits and 4 error flags
 //           instead of top, bot, err). The central node derives top = NOT(position < kTop)
 //           and bot = position < kBottom + 1 with bit-serial comparators against the public
-//           limits and err = OR of the four flags, then runs the same circuit.
+//           limits and err = OR of the four flags, then runs the same circuit: 6 + 6
+//           comparator bootstraps (one per position bit above the limit's lowest set bit),
+//           3 for the error OR, 11 for the decision = 26 bootstraps.
 // The first Rounds::kCases measured rounds cover every case of the decision; the warm-up
 // rounds draw from a separate generator so they do not shift them.
 //
