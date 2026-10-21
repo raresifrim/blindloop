@@ -36,8 +36,17 @@
 // tracking, as ckks_seal does by hand). --drop as in ckks_seal: each dropped bit costs about
 // one bit of precision.
 //
+// Composite scaling (--scaling COMPOSITESCALINGAUTO, --register-bits W): OpenFHE splits every
+// scaling modulus, q0 and the special modulus P into primes of at most W bits (the composite
+// degree, ceil(scaling bits / W), primes per level, so each rescale drops that many limbs and
+// the downlink keeps the composite degree's limbs of q0, with --drop 0). With W <= 30, every
+// prime is below 2^30, so rvv-hexl runs the whole evaluation on its e32 kernels at 64-bit
+// storage (the NATIVE_SIZE=32 build does not decode CKKS in OpenFHE 1.5.1). OpenFHE needs at
+// least 19 bits per prime: --scaling-bits >= 38 at W = 30.
+//
 //   ckks_openfhe [--first-bits 46] [--scaling-bits 36] [--ks HYBRID|BV] [--dnum 4] [--digit-size B]
-//                [--scaling FLEXIBLEAUTO|FLEXIBLEAUTOEXT|FIXEDAUTO] [--ring-dim N] [--mac-k 3]
+//                [--scaling FLEXIBLEAUTO|FLEXIBLEAUTOEXT|FIXEDAUTO|COMPOSITESCALINGAUTO|COMPOSITESCALINGMANUAL]
+//                [--register-bits 30] [--composite-degree 2] [--ring-dim N] [--mac-k 3]
 //                [--mac-tol T] [--drop BITS] [--no-hoist] [--seed N] [--rounds R] [--warmup W]
 //                [--json FILE] [--quiet]
 #include <omp.h>
@@ -90,6 +99,8 @@ struct Config {
 	int dnum = 4;        // HYBRID large digits (0: OpenFHE's default)
 	int digit_size = 0;  // BV digit size in bits (0: OpenFHE's default, one digit per limb)
 	ScalingTechnique scaling = FLEXIBLEAUTO;
+	uint32_t register_bits = 0;     // COMPOSITESCALING*: OpenFHE's register word size (0: 30)
+	uint32_t composite_degree = 0;  // COMPOSITESCALINGMANUAL: primes per scaling modulus (0: 2)
 	uint32_t ring_dim = 0;  // 0: the smallest N for 128-bit security
 	int mac_k = 3;
 	double mac_tol = 0x1p-14;
@@ -103,8 +114,18 @@ const char* ScalingName(ScalingTechnique s) {
 		case FLEXIBLEAUTO: return "FLEXIBLEAUTO";
 		case FLEXIBLEAUTOEXT: return "FLEXIBLEAUTOEXT";
 		case FIXEDAUTO: return "FIXEDAUTO";
+		case COMPOSITESCALINGAUTO: return "COMPOSITESCALINGAUTO";
+		case COMPOSITESCALINGMANUAL: return "COMPOSITESCALINGMANUAL";
 		default: return "?";
 	}
+}
+
+/// RNS limbs of the downlink: the last modulus q0, which composite scaling splits into
+/// GetCompositeDegree() primes (1 otherwise). Central node and passenger derive it from the
+/// shared parameters, so the wire format does not carry it.
+uint32_t DownlinkLimbs(const CryptoContext<DCRTPoly>& cc) {
+	const auto cp = std::dynamic_pointer_cast<CryptoParametersRNS>(cc->GetCryptoParameters());
+	return std::max<uint32_t>(1, cp->GetCompositeDegree());
 }
 
 template <class T>
@@ -286,19 +307,21 @@ private:
 		const int drop = (int)ck::GetU32(wire, pos);
 		const double sf = ck::GetF64(wire, pos + 4);
 		const uint32_t level = ck::GetU32(wire, pos + 12);
+		const uint32_t limbs = DownlinkLimbs(cc_);
 		DCRTPoly like(params_, Format::EVALUATION, true);
-		like.DropLastElements(like.GetNumOfElements() - 1);
-		const auto& tower = like.GetElementAtIndex(0);
-		const uint64_t q = tower.GetModulus().ConvertToInt<uint64_t>();
+		like.DropLastElements(like.GetNumOfElements() - limbs);
 		ck::BitReader r(wire, pos + 16);
-		std::vector<uint64_t> v(tower.GetRingDimension());
+		std::vector<uint64_t> v(like.GetRingDimension());
 		std::vector<DCRTPoly> cv;
 		for (int e = 0; e < 2; ++e) {
-			ck::UnpackRounded(r, v.data(), v.size(), q, drop);
-			NativePoly t = MakeTower(tower, v, Format::COEFFICIENT);
-			t.SetFormat(Format::EVALUATION);
 			DCRTPoly p = like;
-			p.SetElementAtIndex(0, std::move(t));
+			for (uint32_t i = 0; i < limbs; ++i) {
+				const auto& tower = like.GetElementAtIndex(i);
+				ck::UnpackRounded(r, v.data(), v.size(), tower.GetModulus().ConvertToInt<uint64_t>(), drop);
+				NativePoly t = MakeTower(tower, v, Format::COEFFICIENT);
+				t.SetFormat(Format::EVALUATION);
+				p.SetElementAtIndex(i, std::move(t));
+			}
 			cv.push_back(std::move(p));
 		}
 		auto ct = std::make_shared<CiphertextImpl<DCRTPoly>>(prov_.keys.secretKey);
@@ -356,7 +379,8 @@ public:
 		Downlink dl;
 		timed("compress_downlink", [&] { dl.wire = CompressDownlink(round, y); });
 		timed("sign_downlink", [&] { dl.signature = sig_.Sign(dl.wire); });
-		if (onelimb_downlink_bytes_ == 0) onelimb_downlink_bytes_ = Serialize(cc_->Compress(y, 1)).size();  // untimed
+		if (onelimb_downlink_bytes_ == 0)  // untimed
+			onelimb_downlink_bytes_ = Serialize(cc_->Compress(y, DownlinkLimbs(cc_))).size();
 		return dl;
 	}
 
@@ -436,10 +460,12 @@ private:
 		return cc_->EvalMult(Q, S);
 	}
 
-	// Downlink wire: u32 round | u32 drop | f64 scaling factor | u32 level | c0, c1 at one
-	// limb in COEFFICIENT format, each coefficient as round(x / 2^drop), bit-packed.
+	// Downlink wire: u32 round | u32 drop | f64 scaling factor | u32 level | c0, c1 at the
+	// last modulus (one limb, or the composite degree's limbs with composite scaling, limb by
+	// limb) in COEFFICIENT format, each coefficient as round(x / 2^drop), bit-packed.
 	Bytes CompressDownlink(uint32_t round, const Ciphertext<DCRTPoly>& y) {
-		auto c = cc_->Compress(y, 1);
+		const uint32_t limbs = DownlinkLimbs(cc_);
+		auto c = cc_->Compress(y, limbs);
 		Bytes w;
 		ck::PutU32(w, round);
 		ck::PutU32(w, (uint32_t)cfg_.drop);
@@ -449,11 +475,13 @@ private:
 		std::vector<uint64_t> v;
 		for (DCRTPoly p : c->GetElements()) {
 			p.SetFormat(Format::COEFFICIENT);
-			const auto& tower = p.GetElementAtIndex(0);
-			const auto& vals = tower.GetValues();
-			v.resize(vals.GetLength());
-			for (size_t j = 0; j < v.size(); ++j) v[j] = vals[j].ConvertToInt<uint64_t>();
-			ck::PackRounded(v.data(), v.size(), tower.GetModulus().ConvertToInt<uint64_t>(), cfg_.drop, bw);
+			for (uint32_t i = 0; i < limbs; ++i) {
+				const auto& tower = p.GetElementAtIndex(i);
+				const auto& vals = tower.GetValues();
+				v.resize(vals.GetLength());
+				for (size_t j = 0; j < v.size(); ++j) v[j] = vals[j].ConvertToInt<uint64_t>();
+				ck::PackRounded(v.data(), v.size(), tower.GetModulus().ConvertToInt<uint64_t>(), cfg_.drop, bw);
+			}
 		}
 		return w;
 	}
@@ -476,7 +504,8 @@ private:
 int Usage() {
 	std::fprintf(stderr,
 			"usage: ckks_openfhe [--first-bits 46] [--scaling-bits 36] [--ks HYBRID|BV] [--dnum 4] [--digit-size B]\n"
-			"                    [--scaling FLEXIBLEAUTO|FLEXIBLEAUTOEXT|FIXEDAUTO] [--ring-dim N] [--mac-k 3]\n"
+			"                    [--scaling FLEXIBLEAUTO|FLEXIBLEAUTOEXT|FIXEDAUTO|COMPOSITESCALINGAUTO|COMPOSITESCALINGMANUAL]\n"
+			"                    [--register-bits 30] [--composite-degree 2] [--ring-dim N] [--mac-k 3]\n"
 			"                    [--mac-tol T] [--drop BITS] [--no-hoist] [--seed N] [--rounds R] [--warmup W]\n"
 			"                    [--json FILE] [--quiet]\n");
 	return 2;
@@ -511,8 +540,12 @@ int main(int argc, char** argv) {
 			if (v == "FLEXIBLEAUTO") cfg.scaling = FLEXIBLEAUTO;
 			else if (v == "FLEXIBLEAUTOEXT") cfg.scaling = FLEXIBLEAUTOEXT;
 			else if (v == "FIXEDAUTO") cfg.scaling = FIXEDAUTO;
+			else if (v == "COMPOSITESCALINGAUTO") cfg.scaling = COMPOSITESCALINGAUTO;
+			else if (v == "COMPOSITESCALINGMANUAL") cfg.scaling = COMPOSITESCALINGMANUAL;
 			else return Usage();
-		} else if (a == "--ring-dim") cfg.ring_dim = (uint32_t)std::atoi(next().c_str());
+		} else if (a == "--register-bits") cfg.register_bits = (uint32_t)std::atoi(next().c_str());
+		else if (a == "--composite-degree") cfg.composite_degree = (uint32_t)std::atoi(next().c_str());
+		else if (a == "--ring-dim") cfg.ring_dim = (uint32_t)std::atoi(next().c_str());
 		else if (a == "--mac-k") cfg.mac_k = std::atoi(next().c_str());
 		else if (a == "--mac-tol") cfg.mac_tol = std::atof(next().c_str());
 		else if (a == "--drop") cfg.drop = std::atoi(next().c_str());
@@ -533,12 +566,21 @@ int main(int argc, char** argv) {
 	if (cfg.dnum > 0) p.SetNumLargeDigits(cfg.dnum);
 	if (cfg.digit_size > 0) p.SetDigitSize(cfg.digit_size);
 	if (cfg.ring_dim > 0) p.SetRingDim(cfg.ring_dim);
+	const bool composite = cfg.scaling == COMPOSITESCALINGAUTO || cfg.scaling == COMPOSITESCALINGMANUAL;
+	if (composite) {
+		p.SetRegisterWordSize(cfg.register_bits ? cfg.register_bits : 30);
+		if (cfg.scaling == COMPOSITESCALINGMANUAL) p.SetCompositeDegree(cfg.composite_degree ? cfg.composite_degree : 2);
+	}
 	CryptoContext<DCRTPoly> cc = GenCryptoContext(p);
 	cc->Enable(PKE);
 	cc->Enable(KEYSWITCH);
 	cc->Enable(LEVELEDSHE);
 
 	const uint32_t N = cc->GetRingDimension();
+	if (DownlinkLimbs(cc) > 1 && cfg.drop > 0) {
+		std::fprintf(stderr, "--drop needs a one-limb downlink: rounding residues of a multi-limb q0 is not rounding x\n");
+		return 2;
+	}
 	const int B = ck::Block(cfg.mac_k);
 	const int slots = (int)cc->GetEncodingParams()->GetBatchSize();
 	if (ck::kLanesUsed * B > slots) {
@@ -634,6 +676,11 @@ int main(int argc, char** argv) {
 	rec.Param("log2 QP", logQ + logP);
 	rec.Param("scale", "2^" + std::to_string(cfg.scaling_bits) + ", first modulus " + std::to_string(cfg.first_bits) + " bits");
 	rec.Param("scaling", ScalingName(cfg.scaling));
+	if (composite) {
+		rec.Param("register word size (bits)", cpr->GetRegisterWordSize());
+		rec.Param("composite degree", cpr->GetCompositeDegree());
+	}
+	rec.Param("downlink limbs", DownlinkLimbs(cc));
 	rec.Param("multiplicative depth", 3);
 	rec.Param("security", "HEStd_128_classic");
 	rec.Param("key switching", cfg.ks == HYBRID ? "HYBRID, dnum " + std::to_string(cpr->GetNumPartQ())

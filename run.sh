@@ -12,7 +12,8 @@
 #                    every case of the window-lift scenario once)
 #   --stress-rounds  measured rounds of the TFHE stress mode (raw signals; default 12)
 #   --only           run only these benches: zk_selftest bfv_seal bfv_openfhe ckks_seal
-#                    ckks_openfhe tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress
+#                    ckks_openfhe ckks_openfhe_comp tfhe_flags tfhe_stress tfhe_n32_flags
+#                    tfhe_n32_stress
 #                    ntt_seal ntt_openfhe
 #   --label          results/<label>/ (default: the host name, + -<ARM_CPU> and -<BUILD_TAG> when set)
 #   --launch         command prefix for every bench, e.g. "taskset -c 4-7" (one cluster of a
@@ -23,6 +24,8 @@
 # console output), RUN_INFO, and results/<label>/REPORT.md (tools/report.py).
 # Run on an otherwise idle machine: the benches time wall clock.
 set -euo pipefail
+# ckks_openfhe_comp: OpenFHE's composite scaling at a register word of 30 bits (all primes < 2^30)
+CKKS_COMP="--scaling COMPOSITESCALINGAUTO --register-bits 30 --scaling-bits 40 --first-bits 42 --dnum 4"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BACKENDS=""
@@ -115,6 +118,9 @@ for b in $BACKENDS; do
 	wanted bfv_openfhe && run_bench "$dir" "$out" bfv_openfhe bfv_openfhe "${P[@]}" --json "$out/bfv_openfhe.json"
 	wanted ckks_seal && run_bench "$dir" "$out" ckks_seal ckks_seal "${P[@]}" --json "$out/ckks_seal.json"
 	wanted ckks_openfhe && run_bench "$dir" "$out" ckks_openfhe ckks_openfhe "${P[@]}" --json "$out/ckks_openfhe.json"
+	# composite scaling, every prime below 2^30 (rvv-hexl: e32 kernels); parameters in CKKS_COMP above
+	wanted ckks_openfhe_comp && run_bench "$dir" "$out" ckks_openfhe_comp ckks_openfhe $CKKS_COMP "${P[@]}" \
+		--json "$out/ckks_openfhe_comp.json"
 	wanted tfhe_flags && run_bench "$dir" "$out" tfhe_flags tfhe_openfhe --mode flags "${P[@]}" --json "$out/tfhe_flags.json"
 	wanted tfhe_stress && run_bench "$dir" "$out" tfhe_stress tfhe_openfhe --mode stress "${S[@]}" --json "$out/tfhe_stress.json"
 	wanted tfhe_n32_flags && run_bench "$dir" "$out" tfhe_n32_flags tfhe_openfhe_n32 --mode flags "${P[@]}" --json "$out/tfhe_n32_flags.json"

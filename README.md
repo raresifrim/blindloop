@@ -39,6 +39,7 @@ One-time setup (key generation, provisioning, SNARK key generation) is not repor
 | `bfv_openfhe` | BFV | OpenFHE 1.5.1 | aligns the zones' packed ciphertexts with rotations, evaluates the decision with a packed MAC (evaluation form, 3 instances) |
 | `ckks_seal` | CKKS | Microsoft SEAL 4.1.2 | as `bfv_openfhe`, on CKKS slots: aligns the zones' packed ciphertexts with rotations, evaluates the decision in SIMD lanes with an approximate packed MAC (3 instances); N = 8192 |
 | `ckks_openfhe` | CKKS | OpenFHE 1.5.1 | the same circuit with hoisted rotations, HYBRID key switching; N = 8192 |
+| `ckks_openfhe_comp` | CKKS | OpenFHE 1.5.1 | `ckks_openfhe` with composite scaling: every prime of Q and P below 2^30 (register word 30, scale 2^40 as two primes), so rvv-hexl runs it on e32 kernels at 64-bit storage; OpenFHE's security estimate then asks for N = 16384 |
 | `tfhe_openfhe` | TFHE (GINX) | OpenFHE 1.5.1 binfhe | `--mode flags`: the zones send their derived bits and the decision takes 7 bootstrapped gates; `--mode stress`: the zones send their raw signals bit by bit and the central compute also derives Full Up / Full Down (two 12-bit comparators) and the motor-error OR, 17 gates. OpenFHE's 3-input gates (AND3 / OR3, STD128_3); `--arity 2` runs the 2-input gates on STD128 (11 and 26) |
 | `tfhe_openfhe_n32` | TFHE (GINX) | OpenFHE 1.5.1, `NATIVE_SIZE=32` | as above, 32-bit words |
 

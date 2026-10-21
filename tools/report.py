@@ -20,6 +20,7 @@ BENCHES = [
     ("bfv_openfhe", "BFV, OpenFHE"),
     ("ckks_seal", "CKKS, SEAL"),
     ("ckks_openfhe", "CKKS, OpenFHE"),
+    ("ckks_openfhe_comp", "CKKS, OpenFHE, composite scaling"),
     ("tfhe_flags", "TFHE flags, OpenFHE"),
     ("tfhe_stress", "TFHE stress, OpenFHE"),
     ("tfhe_n32_flags", "TFHE flags, OpenFHE NATIVE_SIZE=32"),
