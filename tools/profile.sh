@@ -5,8 +5,8 @@
 # profile.sh — Linux perf profiles of the protocol benches, one node at a time.
 #
 #   tools/profile.sh [--backend B] [--label NAME] [--launch "PREFIX"] [--zones "central passenger"]
-#                    [--only "bfv_seal bfv_openfhe ckks_seal ckks_openfhe tfhe_flags tfhe_stress
-#                            tfhe_n32_flags tfhe_n32_stress"]
+#                    [--only "bfv_seal bfv_openfhe ckks_seal ckks_openfhe ckks_openfhe_comp
+#                            tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"]
 #
 # Every (bench, node) pair is one run under `perf record` (user-space cpu-clock, DWARF call
 # graphs). The harness enables perf only while that node's steps of a measured round run
@@ -19,13 +19,15 @@
 # output; the perf.data files stay in profile-data/<label>/ (large, not in results).
 # Needs perf, with perf_event_paranoid <= 2 (user-space profiling of one's own processes).
 set -euo pipefail
+# ckks_openfhe_comp: as in run.sh
+CKKS_COMP="--scaling COMPOSITESCALINGAUTO --register-bits 30 --scaling-bits 40 --first-bits 42 --dnum 4"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 BACKEND=stock
 LABEL=""
 LAUNCH=""
 ZONES="central passenger"
-ONLY="bfv_seal bfv_openfhe ckks_seal ckks_openfhe tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"
+ONLY="bfv_seal bfv_openfhe ckks_seal ckks_openfhe ckks_openfhe_comp tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--backend) BACKEND="$2"; shift ;;
@@ -82,6 +84,7 @@ plan() {
 args() {
 	case "$1" in
 		bfv_seal|bfv_openfhe|ckks_seal|ckks_openfhe) echo "$1" ;;
+		ckks_openfhe_comp) echo "ckks_openfhe $CKKS_COMP" ;;
 		tfhe_flags) echo "tfhe_openfhe --mode flags" ;;
 		tfhe_stress) echo "tfhe_openfhe --mode stress" ;;
 		tfhe_n32_flags) echo "tfhe_openfhe_n32 --mode flags" ;;
