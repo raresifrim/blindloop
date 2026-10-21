@@ -10,7 +10,8 @@
 #   ipcei_net         emulated Ethernet: lwIP (vendored third_party/lwip) for the end
 #                     zones, the OS's TCP stack for the central node
 #   zk_selftest       checks every zone's proof and both signatures; times them
-#   bfv_seal, bfv_openfhe, tfhe_openfhe[_n32]   the protocol benches (window-lift scenario)
+#   bfv_seal, bfv_openfhe, ckks_seal, ckks_openfhe, tfhe_openfhe[_n32]
+#                     the protocol benches (window-lift scenario)
 #   ntt_seal, ntt_openfhe, tfhe_lut_openfhe     microbenches
 #
 # Library locations come from build.sh (-DOPENFHE_ROOT, -DSEAL_ROOT, ...); every
@@ -174,17 +175,22 @@ if(SEAL_LIB AND SEAL_INCLUDES)
   ipcei_bench(bfv_seal benches/bfv/seal_protocol.cpp)
   target_include_directories(bfv_seal PRIVATE ${SEAL_INCLUDES})
   target_link_libraries(bfv_seal PRIVATE ${SEAL_LIB} ${SEAL_HEXL_LIB})
+  ipcei_bench(ckks_seal benches/ckks/seal_protocol.cpp)
+  target_include_directories(ckks_seal PRIVATE ${SEAL_INCLUDES})
+  target_link_libraries(ckks_seal PRIVATE ${SEAL_LIB} ${SEAL_HEXL_LIB})
   add_executable(ntt_seal benches/ntt/seal_ntt.cpp)
   set_target_properties(ntt_seal PROPERTIES CXX_STANDARD 17)
   target_include_directories(ntt_seal PRIVATE ${SEAL_INCLUDES})
   target_link_libraries(ntt_seal PRIVATE ${SEAL_LIB} ${SEAL_HEXL_LIB} Threads::Threads)
 else()
-  message(WARNING "SEAL not found under ${SEAL_ROOT}: bfv_seal and ntt_seal not built")
+  message(WARNING "SEAL not found under ${SEAL_ROOT}: bfv_seal, ckks_seal and ntt_seal not built")
 endif()
 
 if(EXISTS "${OPENFHE_ROOT}/include/openfhe")
   ipcei_bench(bfv_openfhe benches/bfv/openfhe_protocol.cpp)
   ipcei_openfhe(bfv_openfhe ${OPENFHE_ROOT})
+  ipcei_bench(ckks_openfhe benches/ckks/openfhe_protocol.cpp)
+  ipcei_openfhe(ckks_openfhe ${OPENFHE_ROOT})
   ipcei_bench(tfhe_openfhe benches/tfhe/openfhe_protocol.cpp)
   ipcei_openfhe(tfhe_openfhe ${OPENFHE_ROOT})
   add_executable(tfhe_lut_openfhe benches/tfhe/openfhe_lut_compare.cpp)

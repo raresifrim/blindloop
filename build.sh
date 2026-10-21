@@ -215,7 +215,7 @@ build_benches() {
 		echo "built     $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	} > "$dir/BUILD_INFO"
 	echo "[$b] benches in $dir:"
-	(cd "$dir" && ls -1 bfv_* tfhe_* ntt_* zk_selftest 2>/dev/null | tr '\n' ' '; echo)
+	(cd "$dir" && ls -1 bfv_* ckks_* tfhe_* ntt_* zk_selftest 2>/dev/null | tr '\n' ' '; echo)
 }
 
 for b in $BACKENDS; do
