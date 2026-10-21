@@ -72,7 +72,7 @@ plan() {
 		bfv_seal.*) echo "6 999" ;;
 		bfv_openfhe.central) echo "30 499" ;;
 		bfv_openfhe.*) echo "30 999" ;;
-		ckks_*.central) echo "12 999" ;;
+		ckks_*.central) echo "30 999" ;;
 		ckks_*) echo "30 999" ;;
 		tfhe_*stress.central) echo "4 499" ;;
 		tfhe_*.central) echo "12 499" ;;
