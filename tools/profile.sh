@@ -5,7 +5,8 @@
 # profile.sh — Linux perf profiles of the protocol benches, one node at a time.
 #
 #   tools/profile.sh [--backend B] [--label NAME] [--launch "PREFIX"] [--zones "central passenger"]
-#                    [--only "bfv_seal bfv_openfhe tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"]
+#                    [--only "bfv_seal bfv_openfhe ckks_seal ckks_openfhe tfhe_flags tfhe_stress
+#                            tfhe_n32_flags tfhe_n32_stress"]
 #
 # Every (bench, node) pair is one run under `perf record` (user-space cpu-clock, DWARF call
 # graphs). The harness enables perf only while that node's steps of a measured round run
@@ -24,7 +25,7 @@ BACKEND=stock
 LABEL=""
 LAUNCH=""
 ZONES="central passenger"
-ONLY="bfv_seal bfv_openfhe tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"
+ONLY="bfv_seal bfv_openfhe ckks_seal ckks_openfhe tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"
 while [ $# -gt 0 ]; do
 	case "$1" in
 		--backend) BACKEND="$2"; shift ;;
@@ -32,7 +33,7 @@ while [ $# -gt 0 ]; do
 		--launch) LAUNCH="$2"; shift ;;
 		--zones) ZONES="$2"; shift ;;
 		--only) ONLY="$2"; shift ;;
-		-h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+		-h|--help) sed -n '2,23p' "$0"; exit 0 ;;
 		*) echo "profile.sh: unknown option $1 (see --help)" >&2; exit 2 ;;
 	esac
 	shift
@@ -71,6 +72,8 @@ plan() {
 		bfv_seal.*) echo "6 999" ;;
 		bfv_openfhe.central) echo "30 499" ;;
 		bfv_openfhe.*) echo "30 999" ;;
+		ckks_*.central) echo "12 999" ;;
+		ckks_*) echo "30 999" ;;
 		tfhe_*stress.central) echo "4 499" ;;
 		tfhe_*.central) echo "12 499" ;;
 		tfhe_*) echo "12 999" ;;
@@ -78,7 +81,7 @@ plan() {
 }
 args() {
 	case "$1" in
-		bfv_seal|bfv_openfhe) echo "$1" ;;
+		bfv_seal|bfv_openfhe|ckks_seal|ckks_openfhe) echo "$1" ;;
 		tfhe_flags) echo "tfhe_openfhe --mode flags" ;;
 		tfhe_stress) echo "tfhe_openfhe --mode stress" ;;
 		tfhe_n32_flags) echo "tfhe_openfhe_n32 --mode flags" ;;

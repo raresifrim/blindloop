@@ -18,6 +18,8 @@ import sys
 BENCHES = [
     ("bfv_seal", "BFV, SEAL"),
     ("bfv_openfhe", "BFV, OpenFHE"),
+    ("ckks_seal", "CKKS, SEAL"),
+    ("ckks_openfhe", "CKKS, OpenFHE"),
     ("tfhe_flags", "TFHE flags, OpenFHE"),
     ("tfhe_stress", "TFHE stress, OpenFHE"),
     ("tfhe_n32_flags", "TFHE flags, OpenFHE NATIVE_SIZE=32"),
