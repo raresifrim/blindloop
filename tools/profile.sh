@@ -4,7 +4,7 @@
 #
 # profile.sh — Linux perf profiles of the protocol benches, one node at a time.
 #
-#   tools/profile.sh [--backend B] [--label NAME] [--launch "PREFIX"] [--zones "central passenger"]
+#   tools/profile.sh [--backend B] [--label NAME] [--launch "PREFIX"] [--zones "central passenger"] [--rounds R]
 #                    [--only "bfv_seal bfv_openfhe ckks_seal ckks_openfhe ckks_openfhe_comp
 #                            tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"]
 #
@@ -27,6 +27,7 @@ BACKEND=stock
 LABEL=""
 LAUNCH=""
 ZONES="central passenger"
+ROUNDS_OVERRIDE=""   # --rounds: measured rounds of every profiled run (default: plan() below)
 ONLY="bfv_seal bfv_openfhe ckks_seal ckks_openfhe ckks_openfhe_comp tfhe_flags tfhe_stress tfhe_n32_flags tfhe_n32_stress"
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
 		--label) LABEL="$2"; shift ;;
 		--launch) LAUNCH="$2"; shift ;;
 		--zones) ZONES="$2"; shift ;;
+		--rounds) ROUNDS_OVERRIDE="$2"; shift ;;
 		--only) ONLY="$2"; shift ;;
 		-h|--help) sed -n '2,23p' "$0"; exit 0 ;;
 		*) echo "profile.sh: unknown option $1 (see --help)" >&2; exit 2 ;;
@@ -97,6 +99,7 @@ for b in $ONLY; do
 	[ -x "$BIN/$exe" ] || { echo "  $b: $exe not built, skipped"; continue; }
 	for z in $ZONES; do
 		read -r rounds freq <<< "$(plan "$b" "$z")"
+		rounds="${ROUNDS_OVERRIDE:-$rounds}"
 		d="$DATA/$b.$z.data"
 		printf '  %-16s %-9s ' "$b" "$z"
 		t0=$SECONDS
